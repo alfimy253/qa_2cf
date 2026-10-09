@@ -1,0 +1,27 @@
+{
+  "name": "brightside-dental-studio-practice-site-cloudflare",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "White-label practice website — Cloudflare Workers runtime",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "wrangler dev",
+    "start": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "cf-typegen": "wrangler types",
+    "check": "wrangler deploy --dry-run",
+    "payments:worker": "node --env-file=.dev.vars payment-reminder-worker.js"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.0.2"
+  },
+  "overrides": {
+    "sharp": "0.35.5"
+  },
+  "devDependencies": {
+    "wrangler": "4.147.0"
+  }
+}

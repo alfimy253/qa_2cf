@@ -1,0 +1,22 @@
+{
+  "generator": "Canopy Studio Cloudflare Builder",
+  "version": "1.2.0",
+  "siteId": "brightside-dental-studio",
+  "specialty": "dental",
+  "generatedAt": "2026-10-09T17:42:38.609Z",
+  "target": "cloudflare",
+  "database": "Neon Postgres",
+  "features": {
+    "blog": true,
+    "gallery": true,
+    "scheduling": true
+  },
+  "customPages": [],
+  "config": {
+    "businessName": "Brightside Dental Studio",
+    "location": "Quezon City, Philippines",
+    "theme": "brivon-dark",
+    "primaryColor": "#d4ff3d",
+    "fontStyle": "serif"
+  }
+}
