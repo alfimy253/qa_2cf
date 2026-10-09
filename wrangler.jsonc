@@ -1,6 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "brightside-dental-studio-practice-site",
+ // wrangler.jsonc
+  "name": "brightside-dental-studio-cloudflare", 
   "main": "src/index.js",
   "compatibility_date": "2025-10-08",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
