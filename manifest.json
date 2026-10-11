@@ -1,0 +1,84 @@
+{
+  "generator": "Canopy Studio Builder",
+  "version": "1.3.0",
+  "siteId": "harborlight-vet",
+  "specialty": "veterinary",
+  "generatedAt": "2026-10-11T17:51:22.726Z",
+  "target": "cloudflare",
+  "database": "Neon Postgres",
+  "features": {
+    "blog": true,
+    "gallery": true,
+    "scheduling": true
+  },
+  "customPages": [],
+  "config": {
+    "siteId": "harborlight-vet",
+    "specialty": "veterinary",
+    "specialtyLabel": "Veterinary clinic",
+    "businessName": "Harborlight Vet",
+    "brandName": "Harborlight Vet",
+    "location": "Quezon City, Philippines",
+    "email": "hello@harborlight.example",
+    "phone": "+63 2 8123 4567",
+    "timeZone": "Asia/Manila",
+    "theme": "brivon-dark",
+    "editorialAccent": "black",
+    "primaryColor": "#d4ff3d",
+    "accentColor": "#d4ff3d",
+    "paperColor": "#0a0a0c",
+    "fontStyle": "serif",
+    "features": {
+      "blog": true,
+      "gallery": true,
+      "scheduling": true
+    },
+    "payments": {
+      "gcashName": "Harborlight Vet",
+      "gcashNumber": "+63 917 555 0134",
+      "mayaName": "Harborlight Vet",
+      "mayaNumber": "+63 918 555 0142"
+    },
+    "menuLinks": [
+      {
+        "id": "home",
+        "label": "Welcome",
+        "href": "/#home"
+      },
+      {
+        "id": "care",
+        "label": "Our care",
+        "href": "/#care"
+      },
+      {
+        "id": "about",
+        "label": "Our approach",
+        "href": "/#about"
+      },
+      {
+        "id": "gallery",
+        "label": "Gallery",
+        "href": "/#gallery",
+        "feature": "gallery"
+      },
+      {
+        "id": "journal",
+        "label": "Journal",
+        "href": "/#journal",
+        "feature": "blog"
+      },
+      {
+        "id": "appointments",
+        "label": "Appointments",
+        "href": "/appointments.html",
+        "feature": "scheduling"
+      },
+      {
+        "id": "contact",
+        "label": "Contact",
+        "href": "/#contact"
+      }
+    ],
+    "createdAt": "2026-10-11T17:51:22.726Z"
+  }
+}

@@ -1,0 +1,1040 @@
+import { createNeonClient } from '../db/connection.js';
+import { createAdminSession, verifyAdminSession, verifyPasswordHash } from '../lib/admin-security.js';
+import { adminDashboardPath, isAdminDashboardPath } from '../lib/admin-url.js';
+import { cleanMenuLinks } from '../lib/menu-links.js';
+import { normalizeSiteTheme } from '../lib/site-theme.js';
+import { detectPaymentProofMime, MAX_PAYMENT_PROOF_BYTES, PAYMENT_PROOF_MIME_TYPES, paymentProofFromBase64, paymentProofToBase64 } from '../lib/payment-proof.js';
+import { runPaymentReminderChecks } from '../lib/payment-reminders.js';
+import { databaseErrorMessage } from '../lib/db-errors.js';
+
+const SITE_ID = 'harborlight-vet';
+const DEFAULT_CONFIG = {"siteId":"harborlight-vet","target":"cloudflare","specialty":"veterinary","specialtyLabel":"Veterinary clinic","businessName":"Harborlight Vet","brandName":"Harborlight Vet","location":"Quezon City, Philippines","email":"hello@harborlight.example","phone":"+63 2 8123 4567","timeZone":"Asia/Manila","theme":"brivon-dark","editorialAccent":"black","primaryColor":"#d4ff3d","accentColor":"#d4ff3d","paperColor":"#0a0a0c","fontStyle":"serif","features":{"blog":true,"gallery":true,"scheduling":true},"payments":{"gcashName":"Harborlight Vet","gcashNumber":"+63 917 555 0134","mayaName":"Harborlight Vet","mayaNumber":"+63 918 555 0142"},"customPages":[],"menuLinks":[{"id":"home","label":"Welcome","href":"/#home"},{"id":"care","label":"Our care","href":"/#care"},{"id":"about","label":"Our approach","href":"/#about"},{"id":"gallery","label":"Gallery","href":"/#gallery","feature":"gallery"},{"id":"journal","label":"Journal","href":"/#journal","feature":"blog"},{"id":"appointments","label":"Appointments","href":"/appointments.html","feature":"scheduling"},{"id":"contact","label":"Contact","href":"/#contact"}],"heroEyebrow":"A LITTLE MORE CARE, EVERY DAY","heroHeadline":"Good care for\ngood companions.","heroText":"Thoughtful veterinary care, built around the lives you share.","services":["Wellness & prevention","Gentle diagnostics","Everyday support"],"demoPosts":[{"title":"A calmer first visit starts here","slug":"a-calmer-first-visit","excerpt":"A few small things can make a new clinic visit feel easier for everyone.","category":"First visits","body":"A good first visit starts with a little time and a lot of listening. Bring any questions you have, and let us know what helps your companion feel safe. We will walk you through each step and make a plan together.","id":"sample-1","featureImageUrl":"/images/blog-welcome.svg","featureImageAlt":"An open, welcoming practice doorway","gallery":[{"imageUrl":"/images/blog-welcome.svg","altText":"An open, welcoming practice doorway","caption":"A warm welcome and time to settle in.","sortOrder":0},{"imageUrl":"/images/blog-care-team.svg","altText":"A care team listening together","caption":"Questions are always part of the visit.","sortOrder":1}],"publishedAt":"2026-10-02T17:51:22.726Z"},{"title":"The little check-ins that matter","slug":"little-check-ins-that-matter","excerpt":"Preventive care is less about doing more and more about noticing early.","category":"Everyday care","body":"Regular wellness visits give us a chance to notice small changes, answer questions, and keep a simple record of what is normal for your pet. A steady rhythm of care can make the unexpected feel a little less surprising.","id":"sample-2","featureImageUrl":"/images/blog-small-moments.svg","featureImageAlt":"A sunlit still life with a flower and warm cup","gallery":[{"imageUrl":"/images/blog-small-moments.svg","altText":"A sunlit still life with a flower and warm cup","caption":"Small routines can make care feel easier.","sortOrder":0},{"imageUrl":"/images/blog-care-team.svg","altText":"A care team ready to listen","caption":"A little check-in can open a helpful conversation.","sortOrder":1}],"publishedAt":"2026-09-23T17:51:22.726Z"},{"title":"Making room for a slower hello","slug":"a-slower-hello","excerpt":"A visit can begin at your pet’s pace. Here are a few ways we make space.","category":"Our approach","body":"Every pet arrives with a different story. We make room for a quiet introduction, a pause when it helps, and a conversation about what works best at home.","id":"sample-3","featureImageUrl":"/images/blog-care-team.svg","featureImageAlt":"A practice team and companion in a calm room","gallery":[{"imageUrl":"/images/blog-care-team.svg","altText":"A practice team and companion in a calm room","caption":"A familiar team makes space for a slower hello.","sortOrder":0},{"imageUrl":"/images/blog-welcome.svg","altText":"A welcoming room with an open doorway","caption":"The first moments can move at your pace.","sortOrder":1}],"publishedAt":"2026-09-14T17:51:22.726Z"}],"demoGallery":[{"title":"A warm welcome","imageUrl":"","altText":"Illustrated gallery placeholder for a welcoming practice space","caption":"A friendly first impression starts at the door.","category":"Practice life","sortOrder":1,"status":"published"},{"title":"Care, at every stage","imageUrl":"","altText":"Illustrated gallery placeholder for a care moment","caption":"Thoughtful care for the everyday and the unexpected.","category":"Our approach","sortOrder":2,"status":"published"},{"title":"A little time to listen","imageUrl":"","altText":"Illustrated gallery placeholder for a conversation with the care team","caption":"Questions welcome. We will take the time.","category":"Team","sortOrder":3,"status":"published"}],"createdAt":"2026-10-11T17:51:22.726Z"};
+// db/schema.sql, split into single statements by the builder and applied as one
+// transaction the first time this isolate touches the database, so a fresh Neon
+// URL gets its tele_* tables without a manual step. The same file remains in
+// db/schema.sql for manual or pre-provisioned setups.
+const SCHEMA_STATEMENTS = ["-- Every table in this package uses the tele_ prefix so one Neon database can\n-- hold several apps without name collisions. SITE_ID still scopes every row to\n-- one practice site.\n--\n-- This file is idempotent, and the generated runtime also applies it\n-- automatically (as a single transaction) the first time it touches the\n-- database, so a fresh Neon URL gets its tables without a manual step.\n-- Running it by hand is still supported and safe.\n\n-- Older builds of this package used unprefixed names. Rename them in place so an\n-- existing deployment keeps its content instead of starting from empty tables.\nDO $$ BEGIN\n  IF to_regclass('public.sites') IS NOT NULL AND to_regclass('public.tele_sites') IS NULL THEN ALTER TABLE sites RENAME TO tele_sites; END IF;\n  IF to_regclass('public.blog_posts') IS NOT NULL AND to_regclass('public.tele_blog_posts') IS NULL THEN ALTER TABLE blog_posts RENAME TO tele_blog_posts; END IF;\n  IF to_regclass('public.blog_post_images') IS NOT NULL AND to_regclass('public.tele_blog_post_images') IS NULL THEN ALTER TABLE blog_post_images RENAME TO tele_blog_post_images; END IF;\n  IF to_regclass('public.gallery_items') IS NOT NULL AND to_regclass('public.tele_gallery_items') IS NULL THEN ALTER TABLE gallery_items RENAME TO tele_gallery_items; END IF;\n  IF to_regclass('public.client_accounts') IS NOT NULL AND to_regclass('public.tele_client_accounts') IS NULL THEN ALTER TABLE client_accounts RENAME TO tele_client_accounts; END IF;\n  IF to_regclass('public.client_sessions') IS NOT NULL AND to_regclass('public.tele_client_sessions') IS NULL THEN ALTER TABLE client_sessions RENAME TO tele_client_sessions; END IF;\n  IF to_regclass('public.monthly_schedules') IS NOT NULL AND to_regclass('public.tele_monthly_schedules') IS NULL THEN ALTER TABLE monthly_schedules RENAME TO tele_monthly_schedules; END IF;\n  IF to_regclass('public.consultation_slots') IS NOT NULL AND to_regclass('public.tele_consultation_slots') IS NULL THEN ALTER TABLE consultation_slots RENAME TO tele_consultation_slots; END IF;\n  IF to_regclass('public.appointments') IS NOT NULL AND to_regclass('public.tele_appointments') IS NULL THEN ALTER TABLE appointments RENAME TO tele_appointments; END IF;\n  IF to_regclass('public.appointment_payment_proofs') IS NOT NULL AND to_regclass('public.tele_appointment_payment_proofs') IS NULL THEN ALTER TABLE appointment_payment_proofs RENAME TO tele_appointment_payment_proofs; END IF;\n  IF to_regclass('public.consultation_notes') IS NOT NULL AND to_regclass('public.tele_consultation_notes') IS NULL THEN ALTER TABLE consultation_notes RENAME TO tele_consultation_notes; END IF;\nEND $$","CREATE TABLE IF NOT EXISTS tele_sites (\n  site_id text PRIMARY KEY,\n  config jsonb NOT NULL,\n  created_at timestamptz NOT NULL DEFAULT now(),\n  updated_at timestamptz NOT NULL DEFAULT now()\n)","-- Owner sign-in accounts. The owner username, email and salted PBKDF2 password\n-- hash live here; the generated runtime seeds the row from its ADMIN_* secrets\n-- on first use and then keeps using the database copy. No raw password is ever\n-- stored, and the hash is never returned by an API.\nCREATE TABLE IF NOT EXISTS tele_admin_users (\n  site_id text PRIMARY KEY REFERENCES tele_sites(site_id) ON DELETE CASCADE,\n  username varchar(64) NOT NULL,\n  email varchar(254) NOT NULL,\n  password_hash text NOT NULL,\n  created_at timestamptz NOT NULL DEFAULT now(),\n  updated_at timestamptz NOT NULL DEFAULT now(),\n  CHECK (username ~ '^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$')\n)","-- Fixed blog schema by design: no custom content types or arbitrary blocks.\nCREATE TABLE IF NOT EXISTS tele_blog_posts (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  site_id text NOT NULL REFERENCES tele_sites(site_id) ON DELETE CASCADE,\n  title varchar(140) NOT NULL,\n  slug varchar(160) NOT NULL,\n  excerpt varchar(260) NOT NULL DEFAULT '',\n  body text NOT NULL,\n  feature_image_url text NOT NULL,\n  feature_image_alt varchar(180) NOT NULL,\n  category varchar(60) NOT NULL DEFAULT 'Practice notes',\n  status varchar(12) NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published')),\n  published_at timestamptz,\n  created_at timestamptz NOT NULL DEFAULT now(),\n  updated_at timestamptz NOT NULL DEFAULT now(),\n  UNIQUE (site_id, slug)\n)","CREATE UNIQUE INDEX IF NOT EXISTS tele_blog_posts_site_post_fk_idx ON tele_blog_posts(site_id, id)","CREATE INDEX IF NOT EXISTS tele_blog_posts_public_idx ON tele_blog_posts(site_id, status, published_at DESC)","DROP INDEX IF EXISTS blog_posts_site_post_fk_idx","DROP INDEX IF EXISTS blog_posts_public_idx","-- Idempotent migration for earlier Canopy schemas: existing posts get an original\n-- local cover image, while all new post writes must supply a non-empty feature image.\nALTER TABLE tele_blog_posts ADD COLUMN IF NOT EXISTS feature_image_url text","ALTER TABLE tele_blog_posts ADD COLUMN IF NOT EXISTS feature_image_alt varchar(180)","UPDATE tele_blog_posts SET feature_image_url = '/images/blog-welcome.svg' WHERE feature_image_url IS NULL OR length(btrim(feature_image_url)) = 0","UPDATE tele_blog_posts SET feature_image_alt = 'Practice article feature image' WHERE feature_image_alt IS NULL OR length(btrim(feature_image_alt)) = 0","ALTER TABLE tele_blog_posts ALTER COLUMN feature_image_url SET NOT NULL","ALTER TABLE tele_blog_posts ALTER COLUMN feature_image_alt SET NOT NULL","ALTER TABLE tele_blog_posts ALTER COLUMN feature_image_url DROP DEFAULT","ALTER TABLE tele_blog_posts ALTER COLUMN feature_image_alt DROP DEFAULT","DO $$ BEGIN\n  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'tele_blog_posts'::regclass AND conname = 'tele_blog_posts_feature_image_nonempty') THEN\n    ALTER TABLE tele_blog_posts ADD CONSTRAINT tele_blog_posts_feature_image_nonempty CHECK (length(btrim(feature_image_url)) > 0);\n  END IF;\nEND $$","-- Fixed-schema per-post image gallery. The first item by sort_order is the\n-- featured hero image when the owner does not specify a separate feature image.\nCREATE TABLE IF NOT EXISTS tele_blog_post_images (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  site_id text NOT NULL,\n  post_id uuid NOT NULL,\n  image_url text NOT NULL,\n  alt_text varchar(180) NOT NULL,\n  caption varchar(300) NOT NULL DEFAULT '',\n  sort_order integer NOT NULL DEFAULT 0 CHECK (sort_order >= 0 AND sort_order \u003c= 11),\n  created_at timestamptz NOT NULL DEFAULT now(),\n  updated_at timestamptz NOT NULL DEFAULT now(),\n  FOREIGN KEY (site_id, post_id) REFERENCES tele_blog_posts(site_id, id) ON DELETE CASCADE,\n  UNIQUE (post_id, sort_order)\n)","CREATE INDEX IF NOT EXISTS tele_blog_post_images_order_idx ON tele_blog_post_images(site_id, post_id, sort_order)","DROP INDEX IF EXISTS blog_post_images_order_idx","-- Fixed practice-wide gallery, separate from article-attached galleries.\nCREATE TABLE IF NOT EXISTS tele_gallery_items (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  site_id text NOT NULL REFERENCES tele_sites(site_id) ON DELETE CASCADE,\n  title varchar(120) NOT NULL,\n  image_url text NOT NULL DEFAULT '',\n  alt_text varchar(180) NOT NULL DEFAULT '',\n  caption varchar(300) NOT NULL DEFAULT '',\n  category varchar(60) NOT NULL DEFAULT 'Practice life',\n  status varchar(12) NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published')),\n  sort_order integer NOT NULL DEFAULT 0 CHECK (sort_order >= 0 AND sort_order \u003c= 9999),\n  created_at timestamptz NOT NULL DEFAULT now(),\n  updated_at timestamptz NOT NULL DEFAULT now()\n)","CREATE INDEX IF NOT EXISTS tele_gallery_items_public_idx ON tele_gallery_items(site_id, status, sort_order, created_at DESC)","DROP INDEX IF EXISTS gallery_items_public_idx","-- Self-service client accounts. Passwords are stored only as salted PBKDF2 hashes;\n-- raw session tokens are never written to the database.\nCREATE TABLE IF NOT EXISTS tele_client_accounts (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  site_id text NOT NULL REFERENCES tele_sites(site_id) ON DELETE CASCADE,\n  full_name varchar(100) NOT NULL,\n  email varchar(120) NOT NULL,\n  phone varchar(30) NOT NULL,\n  password_hash text NOT NULL,\n  created_at timestamptz NOT NULL DEFAULT now(),\n  updated_at timestamptz NOT NULL DEFAULT now(),\n  UNIQUE (site_id, email)\n)","CREATE INDEX IF NOT EXISTS tele_client_accounts_site_idx ON tele_client_accounts(site_id, created_at DESC)","DROP INDEX IF EXISTS client_accounts_site_idx","CREATE TABLE IF NOT EXISTS tele_client_sessions (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  site_id text NOT NULL REFERENCES tele_sites(site_id) ON DELETE CASCADE,\n  client_account_id uuid NOT NULL REFERENCES tele_client_accounts(id) ON DELETE CASCADE,\n  token_hash char(64) NOT NULL,\n  expires_at timestamptz NOT NULL,\n  created_at timestamptz NOT NULL DEFAULT now(),\n  UNIQUE (site_id, token_hash)\n)","CREATE INDEX IF NOT EXISTS tele_client_sessions_expiry_idx ON tele_client_sessions(site_id, expires_at)","DROP INDEX IF EXISTS client_sessions_expiry_idx","-- Owner-published schedule for each upcoming month. Weekly rules generate the\n-- normal slots; date exceptions replace a day's hours or close that date.\nCREATE TABLE IF NOT EXISTS tele_monthly_schedules (\n  site_id text NOT NULL REFERENCES tele_sites(site_id) ON DELETE CASCADE,\n  month_start date NOT NULL CHECK (date_trunc('month', month_start)::date = month_start),\n  weekly_rules jsonb NOT NULL DEFAULT '[]'::jsonb,\n  exceptions jsonb NOT NULL DEFAULT '[]'::jsonb,\n  status varchar(12) NOT NULL DEFAULT 'published' CHECK (status IN ('published')),\n  published_at timestamptz NOT NULL DEFAULT now(),\n  updated_at timestamptz NOT NULL DEFAULT now(),\n  PRIMARY KEY (site_id, month_start)\n)","CREATE TABLE IF NOT EXISTS tele_consultation_slots (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  site_id text NOT NULL,\n  month_start date NOT NULL,\n  slot_date date NOT NULL,\n  slot_time time NOT NULL,\n  is_open boolean NOT NULL DEFAULT true,\n  created_at timestamptz NOT NULL DEFAULT now(),\n  updated_at timestamptz NOT NULL DEFAULT now(),\n  FOREIGN KEY (site_id, month_start) REFERENCES tele_monthly_schedules(site_id, month_start) ON DELETE CASCADE,\n  CHECK (slot_date >= month_start AND slot_date \u003c (month_start + interval '1 month')::date),\n  UNIQUE (site_id, slot_date, slot_time)\n)","CREATE INDEX IF NOT EXISTS tele_consultation_slots_month_idx ON tele_consultation_slots(site_id, month_start, slot_date, slot_time)","DROP INDEX IF EXISTS consultation_slots_month_idx","CREATE TABLE IF NOT EXISTS tele_appointments (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  site_id text NOT NULL REFERENCES tele_sites(site_id) ON DELETE CASCADE,\n  client_account_id uuid,\n  availability_slot_id uuid,\n  name varchar(100) NOT NULL,\n  email varchar(120) NOT NULL,\n  phone varchar(30) NOT NULL,\n  service varchar(120) NOT NULL,\n  appointment_date date NOT NULL,\n  appointment_time time NOT NULL,\n  context varchar(100) NOT NULL DEFAULT '',\n  status varchar(12) NOT NULL DEFAULT 'requested' CHECK (status IN ('requested', 'confirmed', 'cancelled')),\n  payment_method varchar(12) NOT NULL DEFAULT 'gcash' CHECK (payment_method IN ('gcash', 'maya')),\n  payment_status varchar(20) NOT NULL DEFAULT 'approved' CHECK (payment_status IN ('awaiting_proof', 'pending_review', 'approved', 'rejected', 'expired')),\n  payment_due_at timestamptz NOT NULL DEFAULT now(),\n  payment_reminder_sent_at timestamptz,\n  payment_owner_attention_at timestamptz,\n  payment_manual_received_at timestamptz,\n  created_at timestamptz NOT NULL DEFAULT now()\n)","-- Idempotent migration for existing appointment tables and their new account/slot relations.\nALTER TABLE tele_appointments ADD COLUMN IF NOT EXISTS client_account_id uuid","ALTER TABLE tele_appointments ADD COLUMN IF NOT EXISTS availability_slot_id uuid","ALTER TABLE tele_appointments ADD COLUMN IF NOT EXISTS payment_method varchar(12) NOT NULL DEFAULT 'gcash' CHECK (payment_method IN ('gcash', 'maya'))","ALTER TABLE tele_appointments ADD COLUMN IF NOT EXISTS payment_status varchar(20) NOT NULL DEFAULT 'approved' CHECK (payment_status IN ('awaiting_proof', 'pending_review', 'approved', 'rejected', 'expired'))","ALTER TABLE tele_appointments ADD COLUMN IF NOT EXISTS payment_due_at timestamptz NOT NULL DEFAULT now()","ALTER TABLE tele_appointments ADD COLUMN IF NOT EXISTS payment_reminder_sent_at timestamptz","ALTER TABLE tele_appointments ADD COLUMN IF NOT EXISTS payment_owner_attention_at timestamptz","ALTER TABLE tele_appointments ADD COLUMN IF NOT EXISTS payment_manual_received_at timestamptz","DO $$ BEGIN\n  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'tele_appointments'::regclass AND conname = 'tele_appointments_client_account_fk') THEN\n    ALTER TABLE tele_appointments ADD CONSTRAINT tele_appointments_client_account_fk FOREIGN KEY (client_account_id) REFERENCES tele_client_accounts(id) ON DELETE SET NULL;\n  END IF;\n  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'tele_appointments'::regclass AND conname = 'tele_appointments_availability_slot_fk') THEN\n    ALTER TABLE tele_appointments ADD CONSTRAINT tele_appointments_availability_slot_fk FOREIGN KEY (availability_slot_id) REFERENCES tele_consultation_slots(id) ON DELETE SET NULL;\n  END IF;\nEND $$","CREATE UNIQUE INDEX IF NOT EXISTS tele_appointments_slot_idx\n  ON tele_appointments(site_id, appointment_date, appointment_time)\n  WHERE status \u003c> 'cancelled'","CREATE UNIQUE INDEX IF NOT EXISTS tele_appointments_availability_slot_idx\n  ON tele_appointments(site_id, availability_slot_id)\n  WHERE availability_slot_id IS NOT NULL AND status \u003c> 'cancelled'","CREATE INDEX IF NOT EXISTS tele_appointments_client_idx ON tele_appointments(site_id, client_account_id, appointment_date, appointment_time)","CREATE INDEX IF NOT EXISTS tele_appointments_date_idx ON tele_appointments(site_id, appointment_date, status)","CREATE INDEX IF NOT EXISTS tele_appointments_payment_due_idx ON tele_appointments(site_id, payment_status, payment_due_at) WHERE status \u003c> 'cancelled'","DROP INDEX IF EXISTS appointments_slot_idx","DROP INDEX IF EXISTS appointments_availability_slot_idx","DROP INDEX IF EXISTS appointments_client_idx","DROP INDEX IF EXISTS appointments_date_idx","DROP INDEX IF EXISTS appointments_payment_due_idx","-- Private proof images are stored as bounded base64 in Neon, never in public assets.\n-- The owner-only API serves proof bytes after session authentication.\nCREATE TABLE IF NOT EXISTS tele_appointment_payment_proofs (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  site_id text NOT NULL REFERENCES tele_sites(site_id) ON DELETE CASCADE,\n  appointment_id uuid NOT NULL REFERENCES tele_appointments(id) ON DELETE CASCADE,\n  client_account_id uuid NOT NULL REFERENCES tele_client_accounts(id) ON DELETE CASCADE,\n  payment_method varchar(12) NOT NULL CHECK (payment_method IN ('gcash', 'maya')),\n  image_mime_type varchar(20) NOT NULL CHECK (image_mime_type IN ('image/jpeg', 'image/png', 'image/webp')),\n  image_base64 text NOT NULL CHECK (length(image_base64) BETWEEN 16 AND 4194304),\n  review_status varchar(20) NOT NULL DEFAULT 'pending_review' CHECK (review_status IN ('pending_review', 'approved', 'rejected')),\n  uploaded_at timestamptz NOT NULL DEFAULT now(),\n  reviewed_at timestamptz,\n  UNIQUE (site_id, appointment_id)\n)","CREATE INDEX IF NOT EXISTS tele_appointment_payment_proofs_status_idx ON tele_appointment_payment_proofs(site_id, review_status, uploaded_at DESC)","DROP INDEX IF EXISTS appointment_payment_proofs_status_idx","-- One optional private owner-to-client note per consultation. The client API only\n-- returns a note when the authenticated account owns that appointment.\nCREATE TABLE IF NOT EXISTS tele_consultation_notes (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  site_id text NOT NULL REFERENCES tele_sites(site_id) ON DELETE CASCADE,\n  appointment_id uuid NOT NULL REFERENCES tele_appointments(id) ON DELETE CASCADE,\n  client_account_id uuid NOT NULL REFERENCES tele_client_accounts(id) ON DELETE CASCADE,\n  note_body text NOT NULL CHECK (length(btrim(note_body)) > 0 AND length(note_body) \u003c= 12000),\n  created_at timestamptz NOT NULL DEFAULT now(),\n  updated_at timestamptz NOT NULL DEFAULT now(),\n  UNIQUE (site_id, appointment_id)\n)","CREATE INDEX IF NOT EXISTS tele_consultation_notes_client_idx ON tele_consultation_notes(site_id, client_account_id, updated_at DESC)","DROP INDEX IF EXISTS consultation_notes_client_idx"];
+const CSRF_COOKIE = 'practice_csrf';
+const CLIENT_SESSION_COOKIE = 'canopy_client';
+const CLIENT_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+const PASSWORD_ITERATIONS = 210000;
+const SITE_TIME_ZONE = DEFAULT_CONFIG.timeZone || 'Asia/Manila';
+const encoder = new TextEncoder();
+const MAX_JSON_BYTES = 256 * 1024;
+
+function headersWithSecurity(source = {}) {
+  const headers = new Headers(source);
+  headers.set('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'");
+  headers.set('X-Content-Type-Options', 'nosniff');
+  headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  headers.set('X-Frame-Options', 'DENY');
+  headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  headers.set('Cross-Origin-Resource-Policy', 'same-site');
+  return headers;
+}
+function json(data, status = 200, extra = {}) {
+  const headers = headersWithSecurity({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...extra });
+  return new Response(JSON.stringify(data), { status, headers });
+}
+function error(message, status = 400) { return json({ error: message }, status); }
+function cleanText(value, max, fallback = '') { return String(value ?? fallback).trim().slice(0, max); }
+function validColor(value, fallback) { return /^#[0-9a-f]{6}$/i.test(String(value || '')) ? String(value) : fallback; }
+function cleanTimeZone(value, fallback = 'Asia/Manila') {
+  const candidate = cleanText(value, 64) || fallback;
+  try { new Intl.DateTimeFormat('en-US', { timeZone: candidate }); return candidate; } catch (_) { return fallback; }
+}
+function cleanBannerImage(value) {
+  const raw = cleanText(value, 2048);
+  if (!raw) return '';
+  if (raw.startsWith('/') && !raw.startsWith('//')) return raw;
+  try { const url = new URL(raw); return url.protocol === 'https:' ? url.href : null; } catch (_) { return null; }
+}
+function cleanCustomPageUrl(value) {
+  let raw = cleanText(value, 120).replace(/^\/+|\/+$/g, '');
+  if (!raw || /[?#:]/.test(raw) || raw.includes('/')) return '';
+  raw = raw.replace(/\.html?$/i, '');
+  if (!raw) return '';
+  const slug = slugify(raw);
+  if (['admin','appointments','api','assets','images','index'].includes(slug)) return '';
+  return `/${slug}.html`;
+}
+function cleanCustomPages(value, fallback = []) {
+  const pages = Array.isArray(value) ? value : Array.isArray(fallback) ? fallback : [];
+  const seen = new Set();
+  return pages.slice(0, 8).flatMap((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+    const menuName = cleanText(item.menuName, 80);
+    const pageTitle = cleanText(item.pageTitle, 120);
+    const pageContent = cleanText(item.pageContent, 6000);
+    const url = cleanCustomPageUrl(item.url);
+    const imageUrl = cleanBannerImage(item.imageUrl);
+    if (!menuName || !pageTitle || !pageContent || !url || imageUrl === null || seen.has(url)) return [];
+    seen.add(url);
+    return [{ id: cleanText(item.id, 48, url.slice(1, -5)), menuName, url, pageTitle, pageContent, imageUrl }];
+  });
+}
+function cleanPaymentDetails(value) {
+  const payments = { ...(DEFAULT_CONFIG.payments || {}), ...(value || {}) };
+  return {
+    gcashName: cleanText(payments.gcashName, 80), gcashNumber: cleanText(payments.gcashNumber, 40),
+    mayaName: cleanText(payments.mayaName, 80), mayaNumber: cleanText(payments.mayaNumber, 40)
+  };
+}
+function cleanSiteConfig(input = {}) {
+  const merged = { ...DEFAULT_CONFIG, ...input };
+  return {
+    ...DEFAULT_CONFIG,
+    businessName: cleanText(merged.businessName, 80, DEFAULT_CONFIG.businessName),
+    brandName: cleanText(merged.brandName, 80, DEFAULT_CONFIG.brandName),
+    location: cleanText(merged.location, 100, DEFAULT_CONFIG.location),
+    email: cleanText(merged.email, 120, DEFAULT_CONFIG.email),
+    phone: cleanText(merged.phone, 30, DEFAULT_CONFIG.phone),
+    timeZone: cleanTimeZone(merged.timeZone, DEFAULT_CONFIG.timeZone || 'Asia/Manila'),
+    primaryColor: validColor(merged.primaryColor, DEFAULT_CONFIG.primaryColor),
+    accentColor: validColor(merged.accentColor, DEFAULT_CONFIG.accentColor),
+    paperColor: validColor(merged.paperColor, DEFAULT_CONFIG.paperColor),
+    fontStyle: merged.fontStyle === 'sans' ? 'sans' : 'serif',
+    theme: normalizeSiteTheme(merged.theme, DEFAULT_CONFIG.theme),
+    editorialAccent: ['black','teal','forest'].includes(merged.editorialAccent) ? merged.editorialAccent : 'black',
+    features: { ...DEFAULT_CONFIG.features, ...(merged.features || {}), gallery: merged.features?.gallery !== false },
+    payments: cleanPaymentDetails(merged.payments),
+    customPages: cleanCustomPages(merged.customPages, DEFAULT_CONFIG.customPages),
+    menuLinks: cleanMenuLinks(merged.menuLinks, DEFAULT_CONFIG.menuLinks)
+  };
+}
+function localToday() { return new Intl.DateTimeFormat('en-CA', { timeZone: SITE_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()); }
+function localClock() { return new Intl.DateTimeFormat('en-GB', { timeZone: SITE_TIME_ZONE, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date()); }
+function validDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return false;
+  const [year, month, day] = value.split('-').map(Number); const parsed = new Date(Date.UTC(year, month - 1, day));
+  return parsed.toISOString().slice(0, 10) === value && value >= localToday();
+}
+function monthStart(value) { return /^\d{4}-(0[1-9]|1[0-2])$/.test(String(value || '')) ? `${value}-01` : ''; }
+function monthDeadline(month) {
+  const [year, monthNumber] = month.split('-').map(Number); const deadline = new Date(Date.UTC(year, monthNumber - 1, 0));
+  deadline.setUTCDate(deadline.getUTCDate() - 2); return deadline.toISOString().slice(0, 10);
+}
+function timeMinutes(value) {
+  const match = /^(?:([01]\d|2[0-3])):([0-5]\d)$/.exec(String(value || ''));
+  if (!match || Number(match[2]) % 30 !== 0) return null;
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+function validTimeWindow(start, end) { const from = timeMinutes(start); const to = timeMinutes(end); return from !== null && to !== null && from < to; }
+function cleanMonthlySchedule(value = {}, month) {
+  const start = monthStart(month);
+  if (!start || !Array.isArray(value.weeklyRules) || value.weeklyRules.length !== 7 || !Array.isArray(value.exceptions || []) || (value.exceptions || []).length > 31) return null;
+  const rules = value.weeklyRules.map((rule) => ({ weekday: Number(rule?.weekday), enabled: rule?.enabled === true, startTime: cleanText(rule?.startTime, 5), endTime: cleanText(rule?.endTime, 5) }));
+  if (rules.some((rule) => !Number.isInteger(rule.weekday) || rule.weekday < 0 || rule.weekday > 6) || new Set(rules.map((rule) => rule.weekday)).size !== 7 || rules.some((rule) => rule.enabled && !validTimeWindow(rule.startTime, rule.endTime))) return null;
+  const exceptions = (value.exceptions || []).map((item) => ({ date: cleanText(item?.date, 10), mode: item?.mode === 'closed' ? 'closed' : item?.mode === 'open' ? 'open' : '', startTime: cleanText(item?.startTime, 5), endTime: cleanText(item?.endTime, 5) }));
+  const monthEnd = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
+  if (exceptions.some((item) => !/^\d{4}-\d{2}-\d{2}$/.test(item.date) || item.date < start || item.date > monthEnd || !item.mode || (item.mode === 'open' && !validTimeWindow(item.startTime, item.endTime))) || new Set(exceptions.map((item) => item.date)).size !== exceptions.length) return null;
+  return { monthStart: start, weeklyRules: rules.sort((a, b) => a.weekday - b.weekday), exceptions };
+}
+function buildMonthlySlots(schedule) {
+  const [year, monthNumber] = schedule.monthStart.slice(0, 7).split('-').map(Number);
+  const days = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate(); const rules = new Map(schedule.weeklyRules.map((rule) => [rule.weekday, rule]));
+  const exceptions = new Map(schedule.exceptions.map((item) => [item.date, item])); const today = localToday(); const slots = [];
+  for (let day = 1; day <= days; day++) {
+    const date = `${year}-${String(monthNumber).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    if (date < today) continue;
+    const exception = exceptions.get(date); if (exception?.mode === 'closed') continue;
+    const weekday = new Date(Date.UTC(year, monthNumber - 1, day)).getUTCDay(); const rule = rules.get(weekday);
+    const window = exception?.mode === 'open' ? exception : rule?.enabled ? rule : null;
+    if (!window || !validTimeWindow(window.startTime, window.endTime)) continue;
+    for (let minute = timeMinutes(window.startTime); minute < timeMinutes(window.endTime); minute += 30) {
+      slots.push({ slotDate: date, slotTime: `${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}` });
+      if (slots.length > 1000) return null;
+    }
+  }
+  return slots;
+}
+function slugify(value) { return String(value || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 160) || 'practice-note'; }
+function cleanGalleryImage(value) {
+  const raw = cleanText(value, 2048);
+  if (!raw) return '';
+  if (raw.startsWith('/') && !raw.startsWith('//')) return raw;
+  try { const url = new URL(raw); return url.protocol === 'https:' ? url.href : null; } catch (_) { return null; }
+}
+function galleryPayload(value = {}) {
+  const imageUrl = cleanGalleryImage(value.imageUrl);
+  const sortOrder = Number(value.sortOrder ?? 0);
+  return {
+    title: cleanText(value.title, 120), imageUrl, altText: cleanText(value.altText, 180),
+    caption: cleanText(value.caption, 300), category: cleanText(value.category, 60, 'Practice life') || 'Practice life',
+    status: value.status === 'published' ? 'published' : 'draft', sortOrder
+  };
+}
+function validGalleryPayload(item) {
+  return item.title && item.imageUrl !== null && Number.isInteger(item.sortOrder) && item.sortOrder >= 0 && item.sortOrder <= 9999 && (!item.imageUrl || item.altText);
+}
+function cleanArticleImage(value) {
+  const raw = cleanText(value, 2048);
+  if (!raw) return '';
+  if (raw.startsWith('/') && !raw.startsWith('//')) return raw;
+  try { const url = new URL(raw); return url.protocol === 'https:' ? url.href : null; } catch (_) { return null; }
+}
+function articlePostPayload(value = {}) {
+  const title = cleanText(value.title, 140);
+  const slug = slugify(value.slug || title);
+  const excerpt = cleanText(value.excerpt, 260);
+  const body = cleanText(value.body, 12000);
+  const category = cleanText(value.category, 60, 'Practice notes') || 'Practice notes';
+  const status = value.status === 'published' ? 'published' : 'draft';
+  if (!Array.isArray(value.gallery ?? []) || (value.gallery || []).length > 12) return null;
+  const gallery = (value.gallery || []).map((image, index) => {
+    const imageUrl = cleanArticleImage(image?.imageUrl);
+    return { imageUrl, altText: cleanText(image?.altText, 180), caption: cleanText(image?.caption, 300), sortOrder: Number(image?.sortOrder ?? index) };
+  });
+  if (gallery.some((image) => !image.imageUrl || image.imageUrl === null || !image.altText || !Number.isInteger(image.sortOrder) || image.sortOrder < 0 || image.sortOrder > 11) || new Set(gallery.map((image) => image.sortOrder)).size !== gallery.length) return null;
+  gallery.sort((left, right) => left.sortOrder - right.sortOrder);
+  const suppliedFeatureUrl = cleanArticleImage(value.featureImageUrl);
+  if (suppliedFeatureUrl === null) return null;
+  const featureImageUrl = suppliedFeatureUrl || gallery[0]?.imageUrl || '';
+  const featureImageAlt = cleanText(value.featureImageAlt, 180) || gallery.find((image) => image.imageUrl === featureImageUrl)?.altText || title;
+  if (!title || !body || !featureImageUrl || !featureImageAlt) return null;
+  return { title, slug, excerpt, body, category, status, featureImageUrl, featureImageAlt, gallery };
+}
+function articleGalleryRows(gallery) {
+  // jsonb_to_recordset below declares snake_case columns, while the owner
+  // dashboard posts camelCase gallery rows ({ imageUrl, altText, caption,
+  // sortOrder }). Passing the objects through unchanged inserted NULLs and the
+  // save failed with "null value in column \"image_url\"" whenever an article
+  // carried a gallery image, so map the fields explicitly.
+  return JSON.stringify((Array.isArray(gallery) ? gallery : []).map((image) => ({
+    image_url: image?.imageUrl ?? '',
+    alt_text: image?.altText ?? '',
+    caption: image?.caption ?? '',
+    sort_order: Number(image?.sortOrder ?? 0)
+  })));
+}
+async function persistArticle(sql, post, id = '') {
+  if (id) return sql`
+    WITH saved AS (
+      UPDATE tele_blog_posts SET title = ${post.title}, slug = ${post.slug}, excerpt = ${post.excerpt}, body = ${post.body}, feature_image_url = ${post.featureImageUrl}, feature_image_alt = ${post.featureImageAlt}, category = ${post.category}, status = ${post.status}, published_at = CASE WHEN ${post.status} = 'published' THEN COALESCE(published_at, now()) ELSE NULL END, updated_at = now()
+      WHERE site_id = ${SITE_ID} AND id = ${id}::uuid
+      RETURNING id, site_id, title, slug, excerpt, body, feature_image_url AS "featureImageUrl", feature_image_alt AS "featureImageAlt", category, status, published_at AS "publishedAt", created_at AS "createdAt"
+    ), cleared AS (
+      DELETE FROM tele_blog_post_images AS image USING saved WHERE image.site_id = saved.site_id AND image.post_id = saved.id RETURNING image.id
+    ), added AS (
+      INSERT INTO tele_blog_post_images (site_id, post_id, image_url, alt_text, caption, sort_order)
+      SELECT saved.site_id, saved.id, incoming.image_url, incoming.alt_text, incoming.caption, incoming.sort_order
+      FROM saved CROSS JOIN (SELECT count(*) AS cleared_count FROM cleared) AS cleared_images
+      CROSS JOIN jsonb_to_recordset(${articleGalleryRows(post.gallery)}::jsonb) AS incoming(image_url text, alt_text text, caption text, sort_order integer)
+      RETURNING id
+    )
+    SELECT saved.* FROM saved`;
+  return sql`
+    WITH saved AS (
+      INSERT INTO tele_blog_posts (site_id, title, slug, excerpt, body, feature_image_url, feature_image_alt, category, status, published_at)
+      VALUES (${SITE_ID}, ${post.title}, ${post.slug}, ${post.excerpt}, ${post.body}, ${post.featureImageUrl}, ${post.featureImageAlt}, ${post.category}, ${post.status}, CASE WHEN ${post.status} = 'published' THEN now() ELSE NULL END)
+      RETURNING id, site_id, title, slug, excerpt, body, feature_image_url AS "featureImageUrl", feature_image_alt AS "featureImageAlt", category, status, published_at AS "publishedAt", created_at AS "createdAt"
+    ), cleared AS (
+      DELETE FROM tele_blog_post_images AS image USING saved WHERE image.site_id = saved.site_id AND image.post_id = saved.id RETURNING image.id
+    ), added AS (
+      INSERT INTO tele_blog_post_images (site_id, post_id, image_url, alt_text, caption, sort_order)
+      SELECT saved.site_id, saved.id, incoming.image_url, incoming.alt_text, incoming.caption, incoming.sort_order
+      FROM saved CROSS JOIN (SELECT count(*) AS cleared_count FROM cleared) AS cleared_images
+      CROSS JOIN jsonb_to_recordset(${articleGalleryRows(post.gallery)}::jsonb) AS incoming(image_url text, alt_text text, caption text, sort_order integer)
+      RETURNING id
+    )
+    SELECT saved.* FROM saved`;
+}
+function displayTime(value) {
+  const [hour, minute] = value.split(':').map(Number); const suffix = hour >= 12 ? 'pm' : 'am';
+  return `${hour % 12 || 12}:${String(minute).padStart(2, '0')} ${suffix}`;
+}
+// The site owns exactly one row in `sites`, which holds its public
+// configuration. db/seed.sql writes that row and the owner's "save details"
+// writes it, but a fresh deployment that only ran db/schema.sql has none — and
+// every client account, booking, CMS row and schedule references
+// sites(site_id) by foreign key, so client signup answered
+// "Could not create the client account." (500/503) until the owner happened to
+// save something first. Create the row on first database use instead; an
+// existing row — including owner-edited settings — is never modified.
+function rawSql(env) {
+  return createNeonClient(env.DATABASE_URL);
+}
+let schemaReady = null;
+let schemaFailures = 0;
+function ensureSchema(env) {
+  if (schemaReady) return schemaReady;
+  if (!env.DATABASE_URL || schemaFailures > 1) return Promise.resolve();
+  const client = rawSql(env);
+  schemaReady = (async () => {
+    await client.transaction((transaction) => SCHEMA_STATEMENTS.map((statement) => transaction.query(statement)));
+  })().catch((cause) => {
+    // Best effort: if the database user may not create tables, the real query
+    // still runs and reports its own, more specific error.
+    schemaReady = null;
+    schemaFailures += 1;
+    console.error('schema bootstrap failed', cause);
+  });
+  return schemaReady;
+}
+let siteRowReady = null;
+function ensureSiteRow(env) {
+  if (!siteRowReady) {
+    const client = rawSql(env);
+    siteRowReady = (async () => {
+      await ensureSchema(env);
+      await client`INSERT INTO tele_sites (site_id, config) VALUES (${SITE_ID}, ${JSON.stringify(DEFAULT_CONFIG)}::jsonb) ON CONFLICT (site_id) DO NOTHING`;
+    })().catch((cause) => { siteRowReady = null; throw cause; });
+  }
+  return siteRowReady;
+}
+// The owner account lives in tele_admin_users. The ADMIN_* Worker secrets seed
+// that row on first use; after that the database copy is authoritative, so the
+// owner can change the username, email or password in the dashboard without
+// touching Worker secrets. An existing row is never overwritten by a redeploy.
+let adminUserReady = null;
+function ensureAdminUser(env) {
+  if (!adminUserReady) {
+    const client = rawSql(env);
+    adminUserReady = (async () => {
+      await ensureSiteRow(env);
+      if (!env.ADMIN_USERNAME || !env.ADMIN_EMAIL || !env.ADMIN_PASSWORD_HASH) return;
+      await client`INSERT INTO tele_admin_users (site_id, username, email, password_hash) VALUES (${SITE_ID}, ${String(env.ADMIN_USERNAME).trim()}, ${String(env.ADMIN_EMAIL).trim()}, ${String(env.ADMIN_PASSWORD_HASH)}) ON CONFLICT (site_id) DO NOTHING`;
+    })().catch((cause) => { adminUserReady = null; throw cause; });
+  }
+  return adminUserReady;
+}
+// Same call shape as before (`await sql(env)` + tagged template), so every
+// existing query keeps working; each one first guarantees the site row exists.
+function sql(env) {
+  const client = rawSql(env);
+  return async (strings, ...values) => {
+    await ensureSiteRow(env);
+    return client(strings, ...values);
+  };
+}
+function base64url(bytes) {
+  let binary = ''; for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+function decodeBase64url(value) {
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4);
+  const binary = atob(padded); return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+async function hmac(value, secret) {
+  const key = await crypto.subtle.importKey('raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return new Uint8Array(await crypto.subtle.sign('HMAC', key, encoder.encode(value)));
+}
+let derivedCsrfSecret = '';
+// A Worker deployed without `wrangler secret put CSRF_SECRET` still needs
+// working forms on the client site (sign-up, booking, owner sign-in). Derive a
+// stable secret from the database URL every deployment already has: it never
+// leaves the server, and changing DATABASE_URL simply invalidates outstanding
+// tokens. An explicit CSRF_SECRET always wins.
+async function csrfSecret(env) {
+  if (env.CSRF_SECRET) return String(env.CSRF_SECRET);
+  if (!env.DATABASE_URL) return '';
+  if (!derivedCsrfSecret) derivedCsrfSecret = base64url(await hmac(`canopy-csrf-v1:${SITE_ID}`, String(env.DATABASE_URL)));
+  return derivedCsrfSecret;
+}
+async function issueCsrf(request, env) {
+  const secret = await csrfSecret(env);
+  if (!secret) return error('Set a CSRF_SECRET Worker secret (or DATABASE_URL) before using forms.', 503);
+  const nonceBytes = crypto.getRandomValues(new Uint8Array(24));
+  const nonce = base64url(nonceBytes);
+  const signature = base64url(await hmac(nonce, secret));
+  const token = `${nonce}.${signature}`;
+  const secure = new URL(request.url).protocol === 'https:' ? '; Secure' : '';
+  // Wrangler local may use http; production is always served over HTTPS.
+  return json({ token }, 200, { 'Set-Cookie': `${CSRF_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=3600${secure}` });
+}
+function readCookie(header, name) {
+  for (const item of String(header || '').split(';')) {
+    const index = item.indexOf('='); if (index < 0) continue;
+    if (item.slice(0, index).trim() === name) { try { return decodeURIComponent(item.slice(index + 1).trim()); } catch (_) { return ''; } }
+  }
+  return '';
+}
+async function passwordDigest(password, salt, iterations = PASSWORD_ITERATIONS) {
+  const key = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveBits']);
+  const derived = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: decodeBase64url(salt), iterations, hash: 'SHA-256' }, key, 256);
+  return base64url(new Uint8Array(derived));
+}
+async function makePasswordHash(password) {
+  const salt = base64url(crypto.getRandomValues(new Uint8Array(16)));
+  return `pbkdf2$${PASSWORD_ITERATIONS}$${salt}$${await passwordDigest(password, salt)}`;
+}
+async function passwordMatches(password, encoded) {
+  const [algorithm, roundsText, salt, expected, ...rest] = String(encoded || '').split('$');
+  const rounds = Number(roundsText);
+  if (algorithm !== 'pbkdf2' || rest.length || !salt || !expected || !Number.isInteger(rounds) || rounds < 100000 || rounds > 1000000) return false;
+  try { return constantEqual(await passwordDigest(password, salt, rounds), expected); } catch (_) { return false; }
+}
+async function sessionTokenHash(token) {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(token)));
+  return [...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+function clientSummary(row) { return { id: row.id, name: row.name, email: row.email, phone: row.phone }; }
+async function createClientSession(request, env, account) {
+  const token = base64url(crypto.getRandomValues(new Uint8Array(32)));
+  const tokenHash = await sessionTokenHash(token);
+  await sql(env)`DELETE FROM tele_client_sessions WHERE site_id = ${SITE_ID} AND expires_at < now()`;
+  await sql(env)`INSERT INTO tele_client_sessions (site_id, client_account_id, token_hash, expires_at) VALUES (${SITE_ID}, ${account.id}, ${tokenHash}, now() + (${CLIENT_SESSION_TTL_SECONDS} * interval '1 second'))`;
+  const secure = new URL(request.url).protocol === 'https:' ? '; Secure' : '';
+  return { 'Set-Cookie': `${CLIENT_SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${CLIENT_SESSION_TTL_SECONDS}${secure}` };
+}
+function clearClientSession(request) {
+  const secure = new URL(request.url).protocol === 'https:' ? '; Secure' : '';
+  return { 'Set-Cookie': `${CLIENT_SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}` };
+}
+async function currentClient(request, env) {
+  const token = readCookie(request.headers.get('Cookie'), CLIENT_SESSION_COOKIE);
+  if (!token || !env.DATABASE_URL) return null;
+  const tokenHash = await sessionTokenHash(token);
+  const rows = await sql(env)`SELECT account.id, account.full_name AS name, account.email, account.phone FROM tele_client_sessions AS session JOIN tele_client_accounts AS account ON account.id = session.client_account_id AND account.site_id = session.site_id WHERE session.site_id = ${SITE_ID} AND session.token_hash = ${tokenHash} AND session.expires_at > now() LIMIT 1`;
+  return rows[0] || null;
+}
+function constantEqual(left, right) {
+  const a = encoder.encode(String(left || '')); const b = encoder.encode(String(right || ''));
+  let diff = a.length ^ b.length; const max = Math.max(a.length, b.length);
+  for (let i = 0; i < max; i++) diff |= (a[i % (a.length || 1)] || 0) ^ (b[i % (b.length || 1)] || 0);
+  return diff === 0;
+}
+async function csrfOk(request, env) {
+  const url = new URL(request.url);
+  const origin = request.headers.get('Origin');
+  if (origin && origin !== url.origin) return false;
+  const cookie = readCookie(request.headers.get('Cookie'), CSRF_COOKIE);
+  const header = request.headers.get('X-CSRF-Token');
+  if (!cookie || !header || !constantEqual(cookie, header)) return false;
+  const secret = await csrfSecret(env);
+  if (!secret) return false;
+  const [nonce, signature, ...rest] = header.split('.');
+  if (!nonce || !signature || rest.length) return false;
+  let actual; try { actual = decodeBase64url(signature); } catch (_) { return false; }
+  const expected = await hmac(nonce, secret);
+  return actual.length === expected.length && constantEqual(base64url(actual), base64url(expected));
+}
+function ownerPasswordProblem(value) {
+  if (value.length < 12 || value.length > 128) return 'The password must be 12–128 characters long.';
+  if (!/[a-z]/.test(value) || !/[A-Z]/.test(value) || !/[0-9]/.test(value) || !/[^A-Za-z0-9\s]/.test(value)) {
+    return 'The password must include a lowercase letter, an uppercase letter, a number and a symbol.';
+  }
+  return '';
+}
+// Resolves the owner account: the tele_admin_users row first (seeded from the
+// ADMIN_* secrets on first use), then the secrets themselves as a fallback.
+async function adminCredentials(env) {
+  const fromSecrets = {
+    username: cleanText(env.ADMIN_USERNAME, 64), email: cleanText(env.ADMIN_EMAIL, 254),
+    passwordHash: String(env.ADMIN_PASSWORD_HASH || ''), source: 'worker-secrets'
+  };
+  const secretsComplete = Boolean(fromSecrets.username && fromSecrets.email && fromSecrets.passwordHash);
+  if (!env.DATABASE_URL) return secretsComplete ? fromSecrets : null;
+  try {
+    await ensureAdminUser(env);
+    const rows = await sql(env)`SELECT username, email, password_hash AS "passwordHash" FROM tele_admin_users WHERE site_id = ${SITE_ID} LIMIT 1`;
+    if (rows[0]) return { username: String(rows[0].username), email: String(rows[0].email), passwordHash: String(rows[0].passwordHash), source: 'database' };
+  } catch (cause) { console.error('owner account read failed', cause); }
+  return secretsComplete ? fromSecrets : null;
+}
+async function adminConfigured(env) {
+  return Boolean(await adminCredentials(env));
+}
+function adminSessionCookieName(request) {
+  return new URL(request.url).protocol === 'https:' ? '__Host-canopy_owner' : 'canopy_owner';
+}
+async function adminOk(request, env) {
+  const credentials = await adminCredentials(env);
+  if (!credentials) return false;
+  const secret = await csrfSecret(env);
+  if (!secret) return false;
+  const token = readCookie(request.headers.get('Cookie'), adminSessionCookieName(request));
+  return verifyAdminSession(token, credentials.username, credentials.passwordHash, secret);
+}
+async function adminFailure(env) {
+  return await adminConfigured(env)
+    ? error('Owner session is not valid. Sign in again.', 401)
+    : error('Owner sign-in is not configured. Set ADMIN_USERNAME, ADMIN_EMAIL and ADMIN_PASSWORD_HASH on the Worker (the database copy is used once it exists).', 503);
+}
+function ownerSessionCookie(request, token) {
+  const secure = new URL(request.url).protocol === 'https:' ? '; Secure' : '';
+  return `${adminSessionCookieName(request)}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200${secure}`;
+}
+async function readJson(request) {
+  const contentLength = Number(request.headers.get('Content-Length') || 0);
+  if (contentLength > MAX_JSON_BYTES) return null;
+  const reader = request.body?.getReader();
+  if (!reader) return null;
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_JSON_BYTES) {
+        try { await reader.cancel(); } catch (_) { /* The body is already being discarded. */ }
+        return null;
+      }
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch (_) { return null; }
+  finally { try { reader.releaseLock(); } catch (_) { /* A cancelled stream may already be released. */ } }
+}
+async function siteConfig(env) {
+  if (!env.DATABASE_URL) return { config: DEFAULT_CONFIG, source: 'generated-fallback' };
+  try {
+    const rows = await sql(env)`SELECT config FROM tele_sites WHERE site_id = ${SITE_ID} LIMIT 1`;
+    return { config: cleanSiteConfig(rows[0]?.config || DEFAULT_CONFIG), source: rows[0] ? 'neon' : 'generated-fallback' };
+  } catch (cause) { console.error('site config read failed', cause); return { config: DEFAULT_CONFIG, source: 'generated-fallback' }; }
+}
+// The public calendar only needs to know which dates still have open times.
+// Reserved/published totals (the "capacity meter") are owner-only: they are
+// returned by the /api/admin/availability route, never by this helper's public
+// callers, which project `hasTimes`, `days` and `slots` only.
+async function availabilityForMonth(env, month, filterDate = '') {
+  const start = monthStart(month);
+  if (!start) throw new Error('Choose a valid month in YYYY-MM format.');
+  if (!env.DATABASE_URL) return { month, published: false, hasTimes: false, slots: [], days: [], totalSlots: 0, bookedSlots: 0 };
+  const rows = filterDate
+    ? await sql(env)`SELECT schedule.status, slot.id, slot.slot_date::text AS date, to_char(slot.slot_time, 'HH24:MI') AS time, EXISTS (SELECT 1 FROM tele_appointments AS appointment WHERE appointment.site_id = slot.site_id AND appointment.appointment_date = slot.slot_date AND appointment.appointment_time = slot.slot_time AND appointment.status <> 'cancelled') AS booked FROM tele_monthly_schedules AS schedule LEFT JOIN tele_consultation_slots AS slot ON slot.site_id = schedule.site_id AND slot.month_start = schedule.month_start AND slot.is_open = true AND slot.slot_date = ${filterDate}::date WHERE schedule.site_id = ${SITE_ID} AND schedule.month_start = ${start}::date ORDER BY slot.slot_date, slot.slot_time`
+    : await sql(env)`SELECT schedule.status, slot.id, slot.slot_date::text AS date, to_char(slot.slot_time, 'HH24:MI') AS time, EXISTS (SELECT 1 FROM tele_appointments AS appointment WHERE appointment.site_id = slot.site_id AND appointment.appointment_date = slot.slot_date AND appointment.appointment_time = slot.slot_time AND appointment.status <> 'cancelled') AS booked FROM tele_monthly_schedules AS schedule LEFT JOIN tele_consultation_slots AS slot ON slot.site_id = schedule.site_id AND slot.month_start = schedule.month_start AND slot.is_open = true WHERE schedule.site_id = ${SITE_ID} AND schedule.month_start = ${start}::date ORDER BY slot.slot_date, slot.slot_time`;
+  const published = rows[0]?.status === 'published'; const slotRows = rows.filter((row) => row.id);
+  const bookedSlots = slotRows.filter((row) => row.booked).length; const totalSlots = slotRows.length;
+  const today = localToday(); const clock = localClock();
+  const upcomingRows = slotRows.filter((row) => row.date > today || (row.date === today && row.time > clock)); const dayMap = new Map();
+  for (const row of upcomingRows) {
+    if (row.booked) continue;
+    const day = dayMap.get(row.date) || { date: row.date, available: 0 };
+    day.available += 1; dayMap.set(row.date, day);
+  }
+  return { month, published, hasTimes: slotRows.length > 0, totalSlots, bookedSlots, days: [...dayMap.values()], slots: upcomingRows.filter((row) => !row.booked).map((row) => ({ id: row.id, date: row.date, time: row.time, label: displayTime(row.time) })) };
+}
+async function routeApi(request, env) {
+  const url = new URL(request.url); const path = url.pathname; const method = request.method.toUpperCase();
+  if (path === '/api/health' && method === 'GET') return json({ ok: true, runtime: 'cloudflare-workers', siteId: SITE_ID });
+  if (path === '/api/csrf' && method === 'GET') return issueCsrf(request, env);
+  if (path === '/api/admin/session' && method === 'GET') {
+    const credentials = await adminCredentials(env);
+    const authenticated = Boolean(credentials) && await adminOk(request, env);
+    return json({
+      configured: Boolean(credentials),
+      authenticated,
+      ...(authenticated ? { dashboardPath: adminDashboardPath(new Date(), SITE_TIME_ZONE) } : {}),
+      email: authenticated ? credentials.email : '',
+      username: authenticated ? credentials.username : ''
+    });
+  }
+  if (path === '/api/admin/login' && method === 'POST') {
+    if (!await csrfOk(request, env)) return error('Cross-site request rejected or security token expired.', 403);
+    const credentials = await adminCredentials(env);
+    if (!credentials) return adminFailure(env);
+    const value = await readJson(request);
+    if (!value || typeof value !== 'object') return error('Send a valid owner sign-in form.');
+    const username = cleanText(value.username, 254);
+    const password = String(value.password || '');
+    const entered = username.toLowerCase();
+    const usernameMatches = constantEqual(entered, credentials.username.toLowerCase())
+      || (Boolean(credentials.email) && constantEqual(entered, credentials.email.toLowerCase()));
+    const passwordMatches = await verifyPasswordHash(password, credentials.passwordHash);
+    if (!usernameMatches || !passwordMatches) return error('Username or password is incorrect.', 401);
+    const token = await createAdminSession(credentials.username, credentials.passwordHash, await csrfSecret(env));
+    return json({ ok: true, email: credentials.email, dashboardPath: adminDashboardPath(new Date(), SITE_TIME_ZONE) }, 200, { 'Set-Cookie': ownerSessionCookie(request, token) });
+  }
+  if (path === '/api/admin/account' && method === 'PUT') {
+    if (!await csrfOk(request, env)) return error('Cross-site request rejected or security token expired.', 403);
+    const credentials = await adminCredentials(env);
+    if (!credentials) return adminFailure(env);
+    if (!await adminOk(request, env)) return error('Owner session is not valid. Sign in again.', 401);
+    const value = await readJson(request);
+    if (!value || typeof value !== 'object') return error('Send a valid owner account form.');
+    const currentPassword = String(value.currentPassword || '');
+    if (!await verifyPasswordHash(currentPassword, credentials.passwordHash)) return error('Current password is incorrect.', 401);
+    const username = cleanText(value.username, 64) || credentials.username;
+    const email = cleanText(value.email, 254) || credentials.email;
+    const newPassword = String(value.newPassword || '');
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$/.test(username)) {
+      return error('Enter a username between 3 and 64 characters using letters, numbers, dots, underscores or hyphens.');
+    }
+    if (!/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(email)) return error('Enter a valid owner email address.');
+    if (newPassword) { const problem = ownerPasswordProblem(newPassword); if (problem) return error(problem); }
+    const passwordHash = newPassword ? await makePasswordHash(newPassword) : credentials.passwordHash;
+    try {
+      await sql(env)`INSERT INTO tele_admin_users (site_id, username, email, password_hash) VALUES (${SITE_ID}, ${username}, ${email}, ${passwordHash}) ON CONFLICT (site_id) DO UPDATE SET username = EXCLUDED.username, email = EXCLUDED.email, password_hash = EXCLUDED.password_hash, updated_at = now()`;
+    } catch (cause) { console.error('owner account save failed', cause); return error(databaseErrorMessage(cause, 'Could not save the owner sign-in details.'), 503); }
+    const token = await createAdminSession(username, passwordHash, await csrfSecret(env));
+    return json({ ok: true, username, email }, 200, { 'Set-Cookie': ownerSessionCookie(request, token) });
+  }
+  if (path === '/api/admin/logout' && method === 'POST') {
+    if (!await csrfOk(request, env)) return error('Cross-site request rejected or security token expired.', 403);
+    const secure = new URL(request.url).protocol === 'https:' ? '; Secure' : '';
+    const cookie = `${adminSessionCookieName(request)}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}`;
+    return json({ ok: true }, 200, { 'Set-Cookie': cookie });
+  }
+  if (path === '/api/site' && method === 'GET') return json(await siteConfig(env));
+  if (path === '/api/site' && method === 'PUT') {
+    if (!await csrfOk(request, env)) return error('Cross-site request rejected or security token expired.', 403);
+    if (!await adminOk(request, env)) return adminFailure(env);
+    const body = await readJson(request); if (!body) return error('Send a valid JSON object.');
+    const config = cleanSiteConfig(body);
+    if (!config.businessName || (config.email && !/^\S+@\S+\.\S+$/.test(config.email))) return error('Check the practice name and contact email.');
+    try {
+      const rows = await sql(env)`INSERT INTO tele_sites (site_id, config) VALUES (${SITE_ID}, ${JSON.stringify(config)}::jsonb) ON CONFLICT (site_id) DO UPDATE SET config = EXCLUDED.config, updated_at = now() RETURNING config`;
+      return json({ config: rows[0].config });
+    } catch (cause) { console.error('site config save failed', cause); return error(databaseErrorMessage(cause, 'Could not save the site settings. Check the Neon schema and connection.'), 503); }
+  }
+  if (path === '/api/auth/register' && method === 'POST') {
+    if (!await csrfOk(request, env)) return error('Cross-site request rejected or security token expired.', 403);
+    if (!DEFAULT_CONFIG.features?.scheduling) return error('Online appointments are not enabled.', 404);
+    if (!env.DATABASE_URL) return error('Client accounts need a configured appointment database.', 503);
+    const value = await readJson(request); if (!value || typeof value !== 'object') return error('Send a valid account form.');
+    const name = cleanText(value.name, 100); const email = cleanText(value.email, 120).toLowerCase(); const phone = cleanText(value.phone, 30); const password = String(value.password || '');
+    if (!name || !/^\S+@\S+\.\S+$/.test(email) || !phone || password.length < 12 || password.length > 128) return error('Enter your name, a valid email, phone number, and a password of at least 12 characters.');
+    const passwordHash = await makePasswordHash(password);
+    try {
+      const accounts = await sql(env)`INSERT INTO tele_client_accounts (site_id, full_name, email, phone, password_hash) VALUES (${SITE_ID}, ${name}, ${email}, ${phone}, ${passwordHash}) RETURNING id, full_name AS name, email, phone`;
+      const sessionHeaders = await createClientSession(request, env, accounts[0]);
+      return json({ client: clientSummary(accounts[0]) }, 201, sessionHeaders);
+    } catch (cause) { console.error('client account registration failed', cause); return error(cause.code === '23505' ? 'An account with that email already exists. Please sign in instead.' : databaseErrorMessage(cause, 'Could not create the client account. Check that the appointment database is reachable.'), cause.code === '23505' ? 409 : 503); }
+  }
+  if (path === '/api/auth/login' && method === 'POST') {
+    if (!await csrfOk(request, env)) return error('Cross-site request rejected or security token expired.', 403);
+    if (!DEFAULT_CONFIG.features?.scheduling) return error('Online appointments are not enabled.', 404);
+    if (!env.DATABASE_URL) return error('Client accounts need a configured appointment database.', 503);
+    const value = await readJson(request); if (!value || typeof value !== 'object') return error('Send a valid sign-in form.');
+    const email = cleanText(value.email, 120).toLowerCase(); const password = String(value.password || '');
+    if (!/^\S+@\S+\.\S+$/.test(email) || !password || password.length > 128) return error('Enter a valid email and password.');
+    const accounts = await sql(env)`SELECT id, full_name AS name, email, phone, password_hash AS "passwordHash" FROM tele_client_accounts WHERE site_id = ${SITE_ID} AND email = ${email} LIMIT 1`;
+    if (!accounts.length || !await passwordMatches(password, accounts[0].passwordHash)) return error('Email or password is incorrect.', 401);
+    const sessionHeaders = await createClientSession(request, env, accounts[0]);
+    return json({ client: clientSummary(accounts[0]) }, 200, sessionHeaders);
+  }
+  if (path === '/api/auth/me' && method === 'GET') {
+    const client = await currentClient(request, env);
+    return json({ client: client ? clientSummary(client) : null });
+  }
+  if (path === '/api/auth/logout' && method === 'POST') {
+    if (!await csrfOk(request, env)) return error('Cross-site request rejected or security token expired.', 403);
+    const token = readCookie(request.headers.get('Cookie'), CLIENT_SESSION_COOKIE);
+    if (token && env.DATABASE_URL) {
+      const tokenHash = await sessionTokenHash(token);
+      await sql(env)`DELETE FROM tele_client_sessions WHERE site_id = ${SITE_ID} AND token_hash = ${tokenHash}`;
+    }
+    return json({ ok: true }, 200, clearClientSession(request));
+  }
+  if (path === '/api/posts' && method === 'GET') {
+    if (!DEFAULT_CONFIG.features?.blog) return json({ posts: [] });
+    if (!env.DATABASE_URL) return json({ posts: DEFAULT_CONFIG.demoPosts || [] });
+    try {
+      const posts = await sql(env)`SELECT post.id, post.title, post.slug, post.excerpt, post.category, post.feature_image_url AS "featureImageUrl", post.feature_image_alt AS "featureImageAlt", post.published_at AS "publishedAt", post.created_at AS "createdAt" FROM tele_blog_posts AS post WHERE post.site_id = ${SITE_ID} AND post.status = 'published' ORDER BY post.published_at DESC NULLS LAST, post.created_at DESC LIMIT 12`;
+      return json({ posts });
+    } catch (cause) { console.error('blog read failed', cause); return error('Could not load journal posts.', 503); }
+  }
+  if (path.startsWith('/api/posts/') && method === 'GET') {
+    if (!DEFAULT_CONFIG.features?.blog) return error('Article not found.', 404);
+    let slug = ''; try { slug = decodeURIComponent(path.slice('/api/posts/'.length)); } catch (_) { return error('Article not found.', 404); }
+    if (!/^[a-z0-9-]{1,160}$/i.test(slug)) return error('Article not found.', 404);
+    if (!env.DATABASE_URL) {
+      const post = (DEFAULT_CONFIG.demoPosts || []).find((item) => item.slug === slug);
+      return post ? json({ post }) : error('Article not found.', 404);
+    }
+    try {
+      const rows = await sql(env)`SELECT post.id, post.title, post.slug, post.excerpt, post.body, post.category, post.feature_image_url AS "featureImageUrl", post.feature_image_alt AS "featureImageAlt", post.published_at AS "publishedAt", post.created_at AS "createdAt", COALESCE((SELECT json_agg(json_build_object('id', image.id, 'imageUrl', image.image_url, 'altText', image.alt_text, 'caption', image.caption, 'sortOrder', image.sort_order) ORDER BY image.sort_order) FROM tele_blog_post_images AS image WHERE image.site_id = post.site_id AND image.post_id = post.id), '[]'::json) AS gallery FROM tele_blog_posts AS post WHERE post.site_id = ${SITE_ID} AND post.status = 'published' AND post.slug = ${slug} LIMIT 1`;
+      return rows.length ? json({ post: rows[0] }) : error('Article not found.', 404);
+    } catch (cause) { console.error('blog article read failed', cause); return error('Could not load this article.', 503); }
+  }
+  if (path === '/api/gallery' && method === 'GET') {
+    if (!DEFAULT_CONFIG.features?.gallery) return json({ items: [] });
+    if (!env.DATABASE_URL) return json({ items: DEFAULT_CONFIG.demoGallery || [] });
+    try {
+      const items = await sql(env)`SELECT id, title, image_url AS "imageUrl", alt_text AS "altText", caption, category, status, sort_order AS "sortOrder", created_at AS "createdAt" FROM tele_gallery_items WHERE site_id = ${SITE_ID} AND status = 'published' ORDER BY sort_order ASC, created_at DESC LIMIT 24`;
+      return json({ items });
+    } catch (cause) { console.error('gallery read failed', cause); return error('Could not load gallery items.', 503); }
+  }
+  if (path === '/api/availability' && method === 'GET') {
+    const date = String(url.searchParams.get('date') || ''); const month = String(url.searchParams.get('month') || (date ? date.slice(0, 7) : localToday().slice(0, 7)));
+    if (!monthStart(month)) return error('Choose a valid month.');
+    if (date && (!validDate(date) || date < localToday() || date.slice(0, 7) !== month)) return error('Choose a valid future date in the selected month.');
+    if (!DEFAULT_CONFIG.features?.scheduling) return json({ month, published: false, hasTimes: false, slots: [], days: [] });
+    try {
+      const data = await availabilityForMonth(env, month, date);
+      return json({ month: data.month, published: data.published, hasTimes: data.hasTimes, days: data.days, slots: data.slots });
+    }
+    catch (cause) { console.error('availability read failed', cause); return error('Could not load the monthly schedule.', 503); }
+  }
+  if (path === '/api/admin/availability' && method === 'GET') {
+    if (!await adminOk(request, env)) return adminFailure(env);
+    if (!DEFAULT_CONFIG.features?.scheduling) return error('Online appointments are not enabled.', 404);
+    const month = String(url.searchParams.get('month') || ''); const start = monthStart(month);
+    if (!start) return error('Choose a valid month.');
+    if (!env.DATABASE_URL) return error('Availability needs a configured appointment database.', 503);
+    try {
+      const schedules = await sql(env)`SELECT weekly_rules AS "weeklyRules", exceptions, status, published_at AS "publishedAt" FROM tele_monthly_schedules WHERE site_id = ${SITE_ID} AND month_start = ${start}::date LIMIT 1`;
+      const metrics = await sql(env)`SELECT count(*)::int AS total, count(*) FILTER (WHERE EXISTS (SELECT 1 FROM tele_appointments AS appointment WHERE appointment.site_id = slot.site_id AND appointment.appointment_date = slot.slot_date AND appointment.appointment_time = slot.slot_time AND appointment.status <> 'cancelled'))::int AS booked FROM tele_consultation_slots AS slot WHERE slot.site_id = ${SITE_ID} AND slot.month_start = ${start}::date AND slot.is_open = true`;
+      const schedule = schedules[0] || { weeklyRules: Array.from({ length: 7 }, (_unused, weekday) => ({ weekday, enabled: false, startTime: '09:00', endTime: '17:00' })), exceptions: [], status: 'unpublished' };
+      return json({ month, deadline: monthDeadline(month), locked: !schedules.length && localToday() > monthDeadline(month), schedule, totalSlots: Number(metrics[0]?.total || 0), bookedSlots: Number(metrics[0]?.booked || 0) });
+    } catch (cause) { console.error('owner schedule read failed', cause); return error('Could not load this month’s availability form.', 503); }
+  }
+  if (path.startsWith('/api/admin/availability/') && method === 'PUT') {
+    if (!await csrfOk(request, env)) return error('Cross-site request rejected or security token expired.', 403);
+    if (!await adminOk(request, env)) return adminFailure(env);
+    if (!DEFAULT_CONFIG.features?.scheduling) return error('Online appointments are not enabled.', 404);
+    const month = path.slice('/api/admin/availability/'.length); const start = monthStart(month);
+    if (!start || month < localToday().slice(0, 7)) return error('Choose the current or a future month.');
+    const value = await readJson(request); if (!value || typeof value !== 'object') return error('Send a valid availability form.');
+    const schedule = cleanMonthlySchedule(value, month); const slots = schedule && buildMonthlySlots(schedule);
+    if (!schedule || !slots) return error('Check the seven weekly-hour rows and date exceptions. Use 30-minute start/end times and no more than 1,000 slots.');
+    try {
+      const existing = await sql(env)`SELECT status FROM tele_monthly_schedules WHERE site_id = ${SITE_ID} AND month_start = ${start}::date LIMIT 1`;
+      const deadline = monthDeadline(month);
+      if (!existing.length && localToday() > deadline) return error(`This month’s schedule deadline was ${deadline}. A missing schedule stays unavailable.`, 409);
+      const slotJson = JSON.stringify(slots.map((slot) => ({ slot_date: slot.slotDate, slot_time: slot.slotTime })));
+      const conflicts = await sql(env)`SELECT appointment.id FROM tele_appointments AS appointment WHERE appointment.site_id = ${SITE_ID} AND appointment.appointment_date >= ${start}::date AND appointment.appointment_date < (${start}::date + interval '1 month')::date AND appointment.status <> 'cancelled' AND NOT EXISTS (SELECT 1 FROM jsonb_to_recordset(${slotJson}::jsonb) AS proposed(slot_date date, slot_time time) WHERE proposed.slot_date = appointment.appointment_date AND proposed.slot_time = appointment.appointment_time) LIMIT 1`;
+      if (conflicts.length) return error('This change would remove a reserved appointment time. Keep it in the schedule or cancel the appointment first.', 409);
+      const saved = await sql(env)`
+        WITH saved AS (
+          INSERT INTO tele_monthly_schedules (site_id, month_start, weekly_rules, exceptions, status, published_at)
+          VALUES (${SITE_ID}, ${start}::date, ${JSON.stringify(schedule.weeklyRules)}::jsonb, ${JSON.stringify(schedule.exceptions)}::jsonb, 'published', now())
+          ON CONFLICT (site_id, month_start) DO UPDATE SET weekly_rules = EXCLUDED.weekly_rules, exceptions = EXCLUDED.exceptions, status = 'published', published_at = now(), updated_at = now()
+          RETURNING site_id, month_start
+        ), removed AS (
+          DELETE FROM tele_consultation_slots AS slot USING saved WHERE slot.site_id = saved.site_id AND slot.month_start = saved.month_start
+            AND NOT EXISTS (SELECT 1 FROM jsonb_to_recordset(${slotJson}::jsonb) AS proposed(slot_date date, slot_time time) WHERE proposed.slot_date = slot.slot_date AND proposed.slot_time = slot.slot_time)
+          RETURNING slot.id
+        ), added AS (
+          INSERT INTO tele_consultation_slots (site_id, month_start, slot_date, slot_time, is_open)
+          SELECT saved.site_id, saved.month_start, proposed.slot_date, proposed.slot_time, true FROM saved
+          CROSS JOIN jsonb_to_recordset(${slotJson}::jsonb) AS proposed(slot_date date, slot_time time)
+          ON CONFLICT (site_id, slot_date, slot_time) DO UPDATE SET month_start = EXCLUDED.month_start, is_open = true, updated_at = now()
+          RETURNING id
+        )
+        SELECT saved.month_start FROM saved`;
+      if (!saved.length) return error('The schedule could not be published.', 500);
+      const availability = await availabilityForMonth(env, month);
+      return json({ schedule: { ...schedule, status: 'published', publishedAt: new Date().toISOString() }, deadline, totalSlots: availability.totalSlots, bookedSlots: availability.bookedSlots });
+    } catch (cause) {
+      if (cause.code === '23505' || cause.code === '23503') return error('The schedule conflicts with a reserved appointment. Refresh and try again.', 409);
+      console.error('owner schedule publish failed', cause); return error(databaseErrorMessage(cause, 'Could not publish this month’s schedule.'), 503);
+    }
+  }
+  if (path === '/api/appointments' && method === 'POST') {
+    if (!await csrfOk(request, env)) return error('Cross-site request rejected or security token expired.', 403);
+    if (!DEFAULT_CONFIG.features?.scheduling) return error('Online appointments are not enabled.', 404);
+    const client = await currentClient(request, env);
+    if (!client) return error('Sign in or create a client account to reserve a consultation.', 401);
+    const value = await readJson(request); if (!value || typeof value !== 'object') return error('Send a valid booking form.');
+    const slotId = String(value.slotId || ''); const service = cleanText(value.service, 120); const context = cleanText(value.context, 100);
+    const paymentMethod = ['gcash', 'maya'].includes(value.paymentMethod) ? value.paymentMethod : '';
+    if (!/^[0-9a-f-]{36}$/i.test(slotId) || !DEFAULT_CONFIG.services.includes(service) || !paymentMethod) return error('Choose a valid open time, visit type and GCash or Maya payment method.');
+    try {
+      const rows = await sql(env)`INSERT INTO tele_appointments (site_id, client_account_id, availability_slot_id, name, email, phone, service, appointment_date, appointment_time, context, status, payment_method, payment_status, payment_due_at) SELECT ${SITE_ID}, ${client.id}, slot.id, ${client.name}, ${client.email}, ${client.phone}, ${service}, slot.slot_date, slot.slot_time, ${context}, 'confirmed', ${paymentMethod}, 'awaiting_proof', now() + interval '15 minutes' FROM tele_consultation_slots AS slot JOIN tele_monthly_schedules AS schedule ON schedule.site_id = slot.site_id AND schedule.month_start = slot.month_start WHERE slot.site_id = ${SITE_ID} AND slot.id = ${slotId}::uuid AND slot.is_open = true AND schedule.status = 'published' AND slot.slot_date >= ${localToday()}::date AND (slot.slot_date + slot.slot_time) AT TIME ZONE ${SITE_TIME_ZONE} > now() AND NOT EXISTS (SELECT 1 FROM tele_appointments AS existing WHERE existing.site_id = slot.site_id AND existing.appointment_date = slot.slot_date AND existing.appointment_time = slot.slot_time AND existing.status <> 'cancelled') RETURNING id, appointment_date::text AS date, to_char(appointment_time, 'HH24:MI') AS time, payment_due_at AS "paymentDueAt"`;
+      if (!rows.length) return error('That time was just taken or is no longer available. Refresh the calendar and choose another.', 409);
+      return json({ ok: true, appointment: { ...rows[0], timeLabel: displayTime(rows[0].time), status: 'confirmed', paymentStatus: 'awaiting_proof', paymentMethod } }, 201);
+    } catch (cause) {
+      if (cause.code === '23505') return error('That time was just taken. Refresh the calendar and choose another.', 409);
+      console.error('appointment reservation failed', cause); return error(databaseErrorMessage(cause, 'We could not reserve this consultation. Please try again.'), 503);
+    }
+  }
+  if (path === '/api/client/appointments' && method === 'GET') {
+    const client = await currentClient(request, env);
+    if (!client) return error('Sign in to view your consultations.', 401);
+    try {
+      const appointments = await sql(env)`SELECT appointment.id, appointment.name, appointment.email, appointment.phone, appointment.service, appointment.context, appointment.status, appointment.payment_status AS "paymentStatus", appointment.payment_method AS "paymentMethod", appointment.payment_due_at AS "paymentDueAt", appointment.payment_reminder_sent_at AS "paymentReminderSentAt", appointment.payment_owner_attention_at AS "paymentOwnerAttentionAt", appointment.payment_manual_received_at AS "paymentManualReceivedAt", appointment.created_at AS "createdAt", proof.id AS "paymentProofId", proof.review_status AS "paymentProofStatus", proof.uploaded_at AS "paymentProofUploadedAt", appointment.appointment_date::text AS date, to_char(appointment.appointment_time, 'HH24:MI') AS time, note.note_body AS "noteBody", note.updated_at AS "noteUpdatedAt" FROM tele_appointments AS appointment LEFT JOIN tele_appointment_payment_proofs AS proof ON proof.site_id = appointment.site_id AND proof.appointment_id = appointment.id AND proof.client_account_id = appointment.client_account_id LEFT JOIN tele_consultation_notes AS note ON note.site_id = appointment.site_id AND note.appointment_id = appointment.id AND note.client_account_id = appointment.client_account_id WHERE appointment.site_id = ${SITE_ID} AND appointment.client_account_id = ${client.id} ORDER BY appointment.appointment_date DESC, appointment.appointment_time DESC LIMIT 200`;
+      return json({ appointments: appointments.map((row) => ({ ...row, timeLabel: displayTime(row.time) })) });
+    } catch (cause) { console.error('client appointment list failed', cause); return error('Could not load your consultations.', 503); }
+  }
+  if (path.startsWith('/api/client/appointments/') && path.endsWith('/payment-proof') && method === 'POST') {
+    if (!await csrfOk(request, env)) return error('Cross-site request rejected or security token expired.', 403);
+    if (!DEFAULT_CONFIG.features?.scheduling) return error('Online appointments are not enabled.', 404);
+    const client = await currentClient(request, env);
+    if (!client) return error('Sign in to upload payment proof.', 401);
+    const id = path.slice('/api/client/appointments/'.length, -'/payment-proof'.length);
+    if (!/^[0-9a-f-]{36}$/i.test(id)) return error('Invalid appointment id.');
+    const contentType = String(request.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
+    if (!PAYMENT_PROOF_MIME_TYPES.includes(contentType)) return error('Upload a PNG, JPEG or WebP payment screenshot.', 415);
+    const declaredLength = Number(request.headers.get('Content-Length') || 0);
+    if (declaredLength > MAX_PAYMENT_PROOF_BYTES) return error('Payment screenshots must be 3 MB or smaller.', 413);
+    let bytes = null;
+    try {
+      const reader = request.body?.getReader();
+      if (!reader) return error('Choose a payment screenshot to upload.');
+      const chunks = []; let total = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > MAX_PAYMENT_PROOF_BYTES) { await reader.cancel(); return error('Payment screenshots must be 3 MB or smaller.', 413); }
+        chunks.push(value);
+      }
+      bytes = new Uint8Array(total); let offset = 0;
+      for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    } catch (_) { return error('Could not read the uploaded screenshot. Try again.'); }
+    if (!bytes?.length) return error('Choose a payment screenshot to upload.');
+    if (detectPaymentProofMime(bytes) !== contentType) return error('The uploaded image format does not match its file type.');
+    try {
+      const imageBase64 = paymentProofToBase64(bytes);
+      const rows = await sql(env)`
+        WITH target AS (
+          SELECT appointment.id, appointment.client_account_id, appointment.payment_method, appointment.payment_status
+          FROM tele_appointments AS appointment
+          WHERE appointment.site_id = ${SITE_ID} AND appointment.id = ${id}::uuid
+            AND appointment.client_account_id = ${client.id} AND appointment.status <> 'cancelled'
+          AND (
+            appointment.payment_status = 'awaiting_proof'
+            OR (appointment.payment_status = 'approved' AND appointment.payment_manual_received_at IS NOT NULL)
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM tele_appointment_payment_proofs AS existing_proof
+            WHERE existing_proof.site_id = appointment.site_id AND existing_proof.appointment_id = appointment.id
+          )
+          FOR UPDATE
+        ), saved AS (
+          INSERT INTO tele_appointment_payment_proofs (site_id, appointment_id, client_account_id, payment_method, image_mime_type, image_base64, review_status)
+          SELECT ${SITE_ID}, target.id, target.client_account_id, target.payment_method, ${contentType}, ${imageBase64}, CASE WHEN target.payment_status = 'approved' THEN 'approved' ELSE 'pending_review' END
+          FROM target
+          RETURNING id, appointment_id, uploaded_at, review_status AS status
+        ), updated AS (
+          UPDATE tele_appointments AS appointment SET payment_status = CASE WHEN appointment.payment_status = 'awaiting_proof' THEN 'pending_review' ELSE appointment.payment_status END
+          FROM saved WHERE appointment.site_id = ${SITE_ID} AND appointment.id = saved.appointment_id
+          RETURNING appointment.id
+        )
+        SELECT saved.id, saved.uploaded_at, saved.status FROM saved JOIN updated ON updated.id = saved.appointment_id LIMIT 1`;
+      if (!rows.length) {
+        const appointments = await sql(env)`SELECT status, payment_status AS "paymentStatus" FROM tele_appointments WHERE site_id = ${SITE_ID} AND id = ${id}::uuid AND client_account_id = ${client.id} LIMIT 1`;
+        if (!appointments.length) return error('That consultation was not found.', 404);
+        if (appointments[0].status === 'cancelled') return error('The practice has released this booking. Contact the practice if you already sent payment.', 409);
+        return error('Payment proof was already uploaded or this consultation is no longer awaiting proof.', 409);
+      }
+      return json({ proof: { id: rows[0].id, status: rows[0].status, uploadedAt: rows[0].uploaded_at } }, 201);
+    } catch (cause) {
+      if (cause.code === '23505') return error('Payment proof has already been uploaded for this consultation.', 409);
+      console.error('payment proof upload failed', cause); return error(databaseErrorMessage(cause, 'Could not save payment proof. Please try again while the booking is active.'), 503);
+    }
+  }
+  if (path.startsWith('/api/client/appointments/') && method === 'PATCH') {
+    if (!await csrfOk(request, env)) return error('Cross-site request rejected or security token expired.', 403);
+    const client = await currentClient(request, env); const id = path.slice('/api/client/appointments/'.length); const value = await readJson(request);
+    if (!client) return error('Sign in to manage your consultations.', 401);
+    if (!/^[0-9a-f-]{36}$/i.test(id) || value?.status !== 'cancelled') return error('Invalid consultation update.');
+    try {
+      const rows = await sql(env)`UPDATE tele_appointments SET status = 'cancelled' WHERE site_id = ${SITE_ID} AND id = ${id}::uuid AND client_account_id = ${client.id} AND status <> 'cancelled' RETURNING id, status`;
+      return rows.length ? json({ appointment: rows[0] }) : error('That consultation was not found or was already cancelled.', 404);
+    } catch (cause) { console.error('client appointment cancel failed', cause); return error('Could not cancel this consultation.', 503); }
+  }
+  if (path === '/api/admin/appointments' && method === 'GET') {
+    if (!await adminOk(request, env)) return adminFailure(env);
+    try {
+      const appointments = await sql(env)`SELECT appointment.id, appointment.name, appointment.email, appointment.phone, appointment.service, appointment.context, appointment.status, appointment.appointment_date::text AS date, to_char(appointment.appointment_time, 'HH24:MI') AS time, client.id AS "clientId", note.note_body AS "noteBody", note.updated_at AS "noteUpdatedAt" FROM tele_appointments AS appointment LEFT JOIN tele_client_accounts AS client ON client.id = appointment.client_account_id AND client.site_id = appointment.site_id LEFT JOIN tele_consultation_notes AS note ON note.site_id = appointment.site_id AND note.appointment_id = appointment.id WHERE appointment.site_id = ${SITE_ID} AND appointment.appointment_date >= (${localToday()}::date - interval '90 days')::date AND appointment.appointment_date <= (${localToday()}::date + interval '90 days')::date ORDER BY appointment.appointment_date ASC, appointment.appointment_time ASC LIMIT 300`;
+      return json({ appointments: appointments.map((row) => ({ ...row, timeLabel: displayTime(row.time) })) });
+    } catch (cause) { console.error('appointment list failed', cause); return error('Could not load appointment requests. Check the Neon schema.', 503); }
+  }
+  if (path === '/api/admin/payments/unpaid' && method === 'GET') {
+    if (!await adminOk(request, env)) return adminFailure(env);
+    try {
+      const bookings = await sql(env)`SELECT appointment.id, appointment.name, client.full_name AS "clientName", COALESCE(client.email, appointment.email) AS username, appointment.service, appointment.payment_method AS "paymentMethod", appointment.payment_due_at AS "paymentDueAt", appointment.payment_reminder_sent_at AS "paymentReminderSentAt", appointment.payment_owner_attention_at AS "paymentOwnerAttentionAt", appointment.created_at AS "createdAt", appointment.appointment_date::text AS date, to_char(appointment.appointment_time, 'HH24:MI') AS time FROM tele_appointments AS appointment LEFT JOIN tele_client_accounts AS client ON client.id = appointment.client_account_id AND client.site_id = appointment.site_id WHERE appointment.site_id = ${SITE_ID} AND appointment.status <> 'cancelled' AND appointment.payment_status = 'awaiting_proof' AND NOT EXISTS (SELECT 1 FROM tele_appointment_payment_proofs AS proof WHERE proof.site_id = appointment.site_id AND proof.appointment_id = appointment.id) ORDER BY appointment.created_at ASC LIMIT 300`;
+      return json({ bookings: bookings.map((row) => ({ ...row, timeLabel: displayTime(row.time) })) });
+    } catch (cause) { console.error('unpaid booking list failed', cause); return error('Could not load bookings awaiting payment proof.', 503); }
+  }
+  if (path.startsWith('/api/admin/payments/unpaid/') && method === 'PATCH') {
+    if (!await csrfOk(request, env)) return error('Cross-site request rejected or security token expired.', 403);
+    if (!await adminOk(request, env)) return adminFailure(env);
+    const id = path.slice('/api/admin/payments/unpaid/'.length); const value = await readJson(request); const action = String(value?.action || '');
+    if (!/^[0-9a-f-]{36}$/i.test(id) || !['received', 'release'].includes(action)) return error('Choose whether payment was received or the booking should be released.');
+    try {
+      const rows = action === 'received'
+        ? await sql(env)`UPDATE tele_appointments AS appointment SET payment_status = 'approved', payment_manual_received_at = now() WHERE appointment.site_id = ${SITE_ID} AND appointment.id = ${id}::uuid AND appointment.status <> 'cancelled' AND appointment.payment_status = 'awaiting_proof' AND NOT EXISTS (SELECT 1 FROM tele_appointment_payment_proofs AS proof WHERE proof.site_id = appointment.site_id AND proof.appointment_id = appointment.id) RETURNING appointment.id, appointment.status, appointment.payment_status AS "paymentStatus"`
+        : await sql(env)`UPDATE tele_appointments AS appointment SET status = 'cancelled' WHERE appointment.site_id = ${SITE_ID} AND appointment.id = ${id}::uuid AND appointment.status <> 'cancelled' AND appointment.payment_status = 'awaiting_proof' AND NOT EXISTS (SELECT 1 FROM tele_appointment_payment_proofs AS proof WHERE proof.site_id = appointment.site_id AND proof.appointment_id = appointment.id) RETURNING appointment.id, appointment.status, appointment.payment_status AS "paymentStatus"`;
+      if (!rows.length) return error('This booking is no longer awaiting payment proof. Refresh the payment list.', 409);
+      return json({ appointment: rows[0], slotReleased: action === 'release' });
+    } catch (cause) { console.error('unpaid booking update failed', cause); return error('Could not update this booking.', 503); }
+  }
+  if (path === '/api/admin/payments' && method === 'GET') {
+    if (!await adminOk(request, env)) return adminFailure(env);
+    try {
+      const payments = await sql(env)`SELECT proof.id, proof.payment_method AS "paymentMethod", proof.review_status AS status, proof.uploaded_at AS "uploadedAt", appointment.id AS "appointmentId", appointment.name, appointment.service, appointment.status AS "appointmentStatus", appointment.payment_status AS "appointmentPaymentStatus", appointment.appointment_date::text AS date, to_char(appointment.appointment_time, 'HH24:MI') AS time, appointment.created_at AS "bookedAt", client.full_name AS "clientName", COALESCE(client.email, appointment.email) AS username FROM tele_appointment_payment_proofs AS proof JOIN tele_appointments AS appointment ON appointment.id = proof.appointment_id AND appointment.site_id = proof.site_id LEFT JOIN tele_client_accounts AS client ON client.id = appointment.client_account_id AND client.site_id = appointment.site_id WHERE proof.site_id = ${SITE_ID} ORDER BY proof.uploaded_at DESC LIMIT 300`;
+      return json({ payments: payments.map((row) => ({ ...row, timeLabel: displayTime(row.time) })) });
+    } catch (cause) { console.error('payment list failed', cause); return error('Could not load payment proofs.', 503); }
+  }
+  if (path.startsWith('/api/admin/payment-proofs/') && path.endsWith('/image') && method === 'GET') {
+    if (!await adminOk(request, env)) return adminFailure(env);
+    const id = path.slice('/api/admin/payment-proofs/'.length, -'/image'.length);
+    if (!/^[0-9a-f-]{36}$/i.test(id)) return error('Invalid payment proof id.');
+    try {
+      const rows = await sql(env)`SELECT image_mime_type AS "mimeType", image_base64 AS image FROM tele_appointment_payment_proofs WHERE site_id = ${SITE_ID} AND id = ${id}::uuid LIMIT 1`;
+      if (!rows.length) return error('Payment proof not found.', 404);
+      const mimeType = PAYMENT_PROOF_MIME_TYPES.includes(rows[0].mimeType) ? rows[0].mimeType : 'application/octet-stream';
+      const headers = headersWithSecurity({ 'Content-Type': mimeType, 'Content-Disposition': 'inline; filename="payment-proof"', 'Cache-Control': 'private, no-store' });
+      return new Response(paymentProofFromBase64(rows[0].image), { status: 200, headers });
+    } catch (cause) { console.error('payment proof image read failed', cause); return error('Could not load the payment proof.', 503); }
+  }
+  if (path.startsWith('/api/admin/payment-proofs/') && method === 'PATCH') {
+    if (!await csrfOk(request, env)) return error('Cross-site request rejected or security token expired.', 403);
+    if (!await adminOk(request, env)) return adminFailure(env);
+    const id = path.slice('/api/admin/payment-proofs/'.length); const value = await readJson(request); const decision = String(value?.status || '');
+    if (!/^[0-9a-f-]{36}$/i.test(id) || !['approved', 'rejected'].includes(decision)) return error('Choose whether to approve or reject this payment proof.');
+    try {
+      const rows = decision === 'approved'
+        ? await sql(env)`WITH reviewed AS (UPDATE tele_appointment_payment_proofs AS proof SET review_status = 'approved', reviewed_at = now() FROM tele_appointments AS appointment WHERE proof.site_id = ${SITE_ID} AND proof.id = ${id}::uuid AND proof.review_status = 'pending_review' AND appointment.site_id = proof.site_id AND appointment.id = proof.appointment_id AND appointment.status <> 'cancelled' RETURNING proof.id, proof.appointment_id), saved AS (UPDATE tele_appointments AS appointment SET payment_status = 'approved' FROM reviewed WHERE appointment.site_id = ${SITE_ID} AND appointment.id = reviewed.appointment_id RETURNING appointment.id) SELECT reviewed.id FROM reviewed JOIN saved ON saved.id = reviewed.appointment_id`
+        : await sql(env)`WITH reviewed AS (UPDATE tele_appointment_payment_proofs AS proof SET review_status = 'rejected', reviewed_at = now() FROM tele_appointments AS appointment WHERE proof.site_id = ${SITE_ID} AND proof.id = ${id}::uuid AND proof.review_status = 'pending_review' AND appointment.site_id = proof.site_id AND appointment.id = proof.appointment_id AND appointment.status <> 'cancelled' RETURNING proof.id, proof.appointment_id), released AS (UPDATE tele_appointments AS appointment SET payment_status = 'rejected', status = 'cancelled' FROM reviewed WHERE appointment.site_id = ${SITE_ID} AND appointment.id = reviewed.appointment_id RETURNING appointment.id) SELECT reviewed.id FROM reviewed JOIN released ON released.id = reviewed.appointment_id`;
+      if (!rows.length) return error('This payment proof was already reviewed or the consultation is no longer active.', 409);
+      return json({ proof: { id: rows[0].id, status: decision }, slotReleased: decision === 'rejected' });
+    } catch (cause) { console.error('payment proof review failed', cause); return error('Could not update the payment proof.', 503); }
+  }
+  if (path.startsWith('/api/admin/appointments/') && method === 'PATCH') {
+    if (!await csrfOk(request, env)) return error('Cross-site request rejected or security token expired.', 403);
+    if (!await adminOk(request, env)) return adminFailure(env);
+    const id = path.slice('/api/admin/appointments/'.length); const value = await readJson(request); const status = String(value?.status || '');
+    if (!/^[0-9a-f-]{36}$/i.test(id) || !['requested', 'confirmed', 'cancelled'].includes(status)) return error('Invalid appointment update.');
+    try {
+      if (status === 'cancelled') {
+        const rows = await sql(env)`UPDATE tele_appointments SET status = 'cancelled' WHERE site_id = ${SITE_ID} AND id = ${id}::uuid AND (appointment_date + appointment_time) AT TIME ZONE ${SITE_TIME_ZONE} > now() + interval '24 hours' RETURNING id, status`;
+        if (!rows.length) {
+          const exists = await sql(env)`SELECT id FROM tele_appointments WHERE site_id = ${SITE_ID} AND id = ${id}::uuid LIMIT 1`;
+          return exists.length ? error('Owner cancellations must be made at least 24 hours before the appointment.', 409) : error('That appointment was not found.', 404);
+        }
+        return json({ appointment: rows[0] });
+      }
+      const rows = await sql(env)`UPDATE tele_appointments SET status = ${status} WHERE site_id = ${SITE_ID} AND id = ${id}::uuid RETURNING id, status`;
+      return rows.length ? json({ appointment: rows[0] }) : error('That appointment was not found.', 404);
+    } catch (cause) {
+      if (cause.code === '23505') return error('That time slot has already been taken.', 409);
+      console.error('appointment update failed', cause); return error('Could not update the appointment.', 503);
+    }
+  }
+  if (path.startsWith('/api/admin/appointments/') && path.endsWith('/note') && method === 'PUT') {
+    if (!await csrfOk(request, env)) return error('Cross-site request rejected or security token expired.', 403);
+    if (!await adminOk(request, env)) return adminFailure(env);
+    const id = path.slice('/api/admin/appointments/'.length, -'/note'.length);
+    const value = await readJson(request); if (!/^[0-9a-f-]{36}$/i.test(id) || !value || typeof value !== 'object') return error('Invalid consultation note.');
+    const noteBody = cleanText(value.noteBody, 12000);
+    try {
+      if (!noteBody) {
+        await sql(env)`DELETE FROM tele_consultation_notes WHERE site_id = ${SITE_ID} AND appointment_id = ${id}::uuid`;
+        return json({ note: null });
+      }
+      const rows = await sql(env)`INSERT INTO tele_consultation_notes (site_id, appointment_id, client_account_id, note_body) SELECT ${SITE_ID}, appointment.id, appointment.client_account_id, ${noteBody} FROM tele_appointments AS appointment WHERE appointment.site_id = ${SITE_ID} AND appointment.id = ${id}::uuid AND appointment.client_account_id IS NOT NULL ON CONFLICT (site_id, appointment_id) DO UPDATE SET client_account_id = EXCLUDED.client_account_id, note_body = EXCLUDED.note_body, updated_at = now() RETURNING note_body AS "noteBody", updated_at AS "noteUpdatedAt"`;
+      return rows.length ? json({ note: rows[0] }) : error('This older appointment has no linked client account, so it cannot receive a private account note.', 400);
+    } catch (cause) { console.error('consultation note save failed', cause); return error(databaseErrorMessage(cause, 'Could not save this private consultation note.'), 503); }
+  }
+  if (path === '/api/admin/posts' && method === 'GET') {
+    if (!await adminOk(request, env)) return adminFailure(env);
+    try {
+      const posts = await sql(env)`SELECT post.id, post.title, post.slug, post.excerpt, post.body, post.category, post.feature_image_url AS "featureImageUrl", post.feature_image_alt AS "featureImageAlt", post.status, post.published_at AS "publishedAt", post.created_at AS "createdAt", COALESCE((SELECT json_agg(json_build_object('id', image.id, 'imageUrl', image.image_url, 'altText', image.alt_text, 'caption', image.caption, 'sortOrder', image.sort_order) ORDER BY image.sort_order) FROM tele_blog_post_images AS image WHERE image.site_id = post.site_id AND image.post_id = post.id), '[]'::json) AS gallery FROM tele_blog_posts AS post WHERE post.site_id = ${SITE_ID} ORDER BY post.created_at DESC LIMIT 100`;
+      return json({ posts });
+    } catch (cause) { console.error('admin blog read failed', cause); return error('Could not load blog posts. Check the Neon schema.', 503); }
+  }
+  if (path === '/api/admin/posts' && method === 'POST') {
+    if (!await csrfOk(request, env)) return error('Cross-site request rejected or security token expired.', 403);
+    if (!await adminOk(request, env)) return adminFailure(env);
+    const value = await readJson(request); if (!value) return error('Send a valid JSON object.');
+    const post = articlePostPayload(value);
+    if (!post) return error('Add a title and article body, plus a valid feature image. If you leave the feature image blank, add a gallery image with a URL and alt text.');
+    try {
+      const posts = await persistArticle(sql(env), post);
+      return json({ post: posts[0] }, 201);
+    } catch (cause) { console.error('blog post save failed', cause); return error(cause.code === '23505' ? 'That URL slug is already in use or gallery order is duplicated.' : databaseErrorMessage(cause, 'Could not save the post.'), cause.code === '23505' ? 409 : 503); }
+  }
+  if (path.startsWith('/api/admin/posts/') && method === 'PUT') {
+    if (!await csrfOk(request, env)) return error('Cross-site request rejected or security token expired.', 403);
+    if (!await adminOk(request, env)) return adminFailure(env);
+    const id = path.slice('/api/admin/posts/'.length);
+    const value = await readJson(request); if (!value) return error('Send a valid JSON object.');
+    if (!/^[0-9a-f-]{36}$/i.test(id)) return error('Invalid post id.');
+    const post = articlePostPayload(value);
+    if (!post) return error('Add a title and article body, plus a valid feature image. If you leave the feature image blank, add a gallery image with a URL and alt text.');
+    try {
+      const posts = await persistArticle(sql(env), post, id);
+      return posts.length ? json({ post: posts[0] }) : error('That post was not found.', 404);
+    } catch (cause) {
+      if (cause.code === '23505') return error('That URL slug is already in use or gallery order is duplicated.', 409);
+      console.error('blog post update failed', cause); return error(databaseErrorMessage(cause, 'Could not update the post.'), 503);
+    }
+  }
+  if (path.startsWith('/api/admin/posts/') && method === 'DELETE') {
+    if (!await csrfOk(request, env)) return error('Cross-site request rejected or security token expired.', 403);
+    if (!await adminOk(request, env)) return adminFailure(env);
+    const id = path.slice('/api/admin/posts/'.length);
+    if (!/^[0-9a-f-]{36}$/i.test(id)) return error('Invalid post id.');
+    try {
+      const rows = await sql(env)`DELETE FROM tele_blog_posts WHERE site_id = ${SITE_ID} AND id = ${id}::uuid RETURNING id`;
+      return rows.length ? json({ ok: true }) : error('That post was not found.', 404);
+    } catch (cause) { console.error('blog post delete failed', cause); return error('Could not delete the post.', 503); }
+  }
+  if (path === '/api/admin/gallery' && method === 'GET') {
+    if (!await adminOk(request, env)) return adminFailure(env);
+    try {
+      const items = await sql(env)`SELECT id, title, image_url AS "imageUrl", alt_text AS "altText", caption, category, status, sort_order AS "sortOrder", created_at AS "createdAt" FROM tele_gallery_items WHERE site_id = ${SITE_ID} ORDER BY sort_order ASC, created_at DESC LIMIT 100`;
+      return json({ items });
+    } catch (cause) { console.error('gallery admin read failed', cause); return error('Could not load gallery items. Check the Neon schema.', 503); }
+  }
+  if (path === '/api/admin/gallery' && method === 'POST') {
+    if (!await csrfOk(request, env)) return error('Cross-site request rejected or security token expired.', 403);
+    if (!await adminOk(request, env)) return adminFailure(env);
+    const value = await readJson(request); if (!value) return error('Send a valid JSON object.');
+    const item = galleryPayload(value);
+    if (!validGalleryPayload(item)) return error('Add a title, valid HTTPS or same-site image URL and alternative text. Display order must be from 0 to 9999.');
+    try {
+      const items = await sql(env)`INSERT INTO tele_gallery_items (site_id, title, image_url, alt_text, caption, category, status, sort_order) VALUES (${SITE_ID}, ${item.title}, ${item.imageUrl}, ${item.altText}, ${item.caption}, ${item.category}, ${item.status}, ${item.sortOrder}) RETURNING id, title, image_url AS "imageUrl", alt_text AS "altText", caption, category, status, sort_order AS "sortOrder", created_at AS "createdAt"`;
+      return json({ item: items[0] }, 201);
+    } catch (cause) { console.error('gallery item create failed', cause); return error(databaseErrorMessage(cause, 'Could not save the gallery item.'), 503); }
+  }
+  if (path.startsWith('/api/admin/gallery/') && (method === 'PUT' || method === 'DELETE')) {
+    if (!await csrfOk(request, env)) return error('Cross-site request rejected or security token expired.', 403);
+    if (!await adminOk(request, env)) return adminFailure(env);
+    const id = path.slice('/api/admin/gallery/'.length);
+    if (!/^[0-9a-f-]{36}$/i.test(id)) return error('Invalid gallery item id.');
+    if (method === 'DELETE') {
+      try {
+        const rows = await sql(env)`DELETE FROM tele_gallery_items WHERE site_id = ${SITE_ID} AND id = ${id}::uuid RETURNING id`;
+        return rows.length ? json({ ok: true }) : error('That gallery item was not found.', 404);
+      } catch (cause) { console.error('gallery item delete failed', cause); return error('Could not delete the gallery item.', 503); }
+    }
+    const value = await readJson(request); if (!value) return error('Send a valid JSON object.');
+    const item = galleryPayload(value);
+    if (!validGalleryPayload(item)) return error('Add a title, valid HTTPS or same-site image URL and alternative text. Display order must be from 0 to 9999.');
+    try {
+      const items = await sql(env)`UPDATE tele_gallery_items SET title = ${item.title}, image_url = ${item.imageUrl}, alt_text = ${item.altText}, caption = ${item.caption}, category = ${item.category}, status = ${item.status}, sort_order = ${item.sortOrder}, updated_at = now() WHERE site_id = ${SITE_ID} AND id = ${id}::uuid RETURNING id, title, image_url AS "imageUrl", alt_text AS "altText", caption, category, status, sort_order AS "sortOrder", created_at AS "createdAt"`;
+      return items.length ? json({ item: items[0] }) : error('That gallery item was not found.', 404);
+    } catch (cause) { console.error('gallery item update failed', cause); return error(databaseErrorMessage(cause, 'Could not update the gallery item.'), 503); }
+  }
+  return error('API route not found.', 404);
+}
+
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    if (url.pathname.startsWith('/api/')) {
+      try { return await routeApi(request, env); }
+      catch (cause) { console.error('unhandled Worker API error', cause); return error('Something went wrong. Please try again.', 500); }
+    }
+    if (request.method !== 'GET' && request.method !== 'HEAD') return error('Method not allowed.', 405);
+    if (url.pathname === '/admin.html') return error('Not found.', 404);
+    if (isAdminDashboardPath(url.pathname)) {
+      const expectedPath = adminDashboardPath(new Date(), SITE_TIME_ZONE);
+      if (url.pathname !== expectedPath) {
+        if (!await adminOk(request, env)) return error('Not found.', 404);
+        const headers = headersWithSecurity({ Location: expectedPath, 'Cache-Control': 'no-store' });
+        return new Response(null, { status: 302, headers });
+      }
+      const assetUrl = new URL('/admin.html', url);
+      const assetRequest = new Request(assetUrl, { method: request.method, headers: request.headers });
+      const response = await env.ASSETS.fetch(assetRequest);
+      const headers = headersWithSecurity(response.headers);
+      headers.set('Cache-Control', 'no-store');
+      return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+    }
+    const response = await env.ASSETS.fetch(request);
+    const headers = headersWithSecurity(response.headers);
+    if (url.pathname === '/' || url.pathname.endsWith('.html')) headers.set('Cache-Control', 'no-store');
+    return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+  },
+  async scheduled(_controller, env, ctx) {
+    if (!env.DATABASE_URL) return;
+    const job = runPaymentReminderChecks(sql(env), SITE_ID)
+      .then(({ reminders, ownerFollowups }) => {
+        if (reminders.length || ownerFollowups.length) console.info(`[payment-reminders] ${reminders.length} client reminder(s), ${ownerFollowups.length} owner follow-up(s)`);
+      })
+      .catch((cause) => console.error('scheduled payment reminder check failed', cause));
+    ctx.waitUntil(job);
+  }
+};
