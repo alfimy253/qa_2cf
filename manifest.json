@@ -1,25 +1,25 @@
 {
   "generator": "Canopy Studio Builder",
   "version": "1.3.0",
-  "siteId": "harborlight-vet",
-  "specialty": "veterinary",
-  "generatedAt": "2026-10-11T17:51:22.726Z",
+  "siteId": "brightside-dental-studio",
+  "specialty": "dental",
+  "generatedAt": "2026-10-13T18:31:05.506Z",
   "target": "cloudflare",
   "database": "Neon Postgres",
   "features": {
-    "blog": true,
-    "gallery": true,
+    "blog": false,
+    "gallery": false,
     "scheduling": true
   },
   "customPages": [],
   "config": {
-    "siteId": "harborlight-vet",
-    "specialty": "veterinary",
-    "specialtyLabel": "Veterinary clinic",
-    "businessName": "Harborlight Vet",
-    "brandName": "Harborlight Vet",
+    "siteId": "brightside-dental-studio",
+    "specialty": "dental",
+    "specialtyLabel": "Dental practice",
+    "businessName": "Brightside Dental Studio",
+    "brandName": "Brightside Dental",
     "location": "Quezon City, Philippines",
-    "email": "hello@harborlight.example",
+    "email": "hello@brightside.example",
     "phone": "+63 2 8123 4567",
     "timeZone": "Asia/Manila",
     "theme": "brivon-dark",
@@ -29,14 +29,14 @@
     "paperColor": "#0a0a0c",
     "fontStyle": "serif",
     "features": {
-      "blog": true,
-      "gallery": true,
+      "blog": false,
+      "gallery": false,
       "scheduling": true
     },
     "payments": {
-      "gcashName": "Harborlight Vet",
+      "gcashName": "Brightside Dental Studio",
       "gcashNumber": "+63 917 555 0134",
-      "mayaName": "Harborlight Vet",
+      "mayaName": "Brightside Dental Studio",
       "mayaNumber": "+63 918 555 0142"
     },
     "menuLinks": [
@@ -79,6 +79,6 @@
         "href": "/#contact"
       }
     ],
-    "createdAt": "2026-10-11T17:51:22.726Z"
+    "createdAt": "2026-10-13T18:31:05.506Z"
   }
 }

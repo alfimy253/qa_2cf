@@ -1,7 +1,7 @@
 import { createNeonClient } from './db/connection.js';
 import { markPaymentOwnerFollowups, markPaymentProofReminders } from './lib/payment-reminders.js';
 
-const SITE_ID = 'harborlight-vet';
+const SITE_ID = 'brightside-dental-studio';
 const REMINDER_INTERVAL_MS = 90_000;
 const OWNER_FOLLOWUP_INTERVAL_MS = 180_000;
 

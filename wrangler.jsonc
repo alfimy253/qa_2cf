@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "harborlight-vet-cloudflare",
+  "name": "brightside-dental-studio-cloudflare",
   "main": "src/index.js",
   "compatibility_date": "2025-10-08",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
@@ -9,6 +9,17 @@
     "binding": "ASSETS",
     "directory": "./public",
     "run_worker_first": true
+  },
+  // The production copy of .dev.vars. Wrangler never uploads .dev.vars during
+  // deploy, so the same values are baked in here instead: `npm run deploy` is
+  // a fully configured Worker and the owner dashboard's CSRF protection works
+  // immediately after deploy.
+  "vars": {
+    "DATABASE_URL": "postgresql://carlamissiona:yhxjpBia4MA6@ep-round-moon-a1obo7oq-pooler.ap-southeast-1.aws.neon.tech/workers_db",
+    "ADMIN_USERNAME": "admin",
+    "ADMIN_EMAIL": "missiona.carla@gmail.com",
+    "ADMIN_PASSWORD_HASH": "pbkdf2$210000$4IPPlnx4C32OjWjHjtacuw$TBO5BMM5YQTR5oGek9C_2LBCyt7p-Ud8zJkzfbCiVmQ",
+    "CSRF_SECRET": "732b5ac26853519b1dfdd78c165692b830354de2698ee3a39771e25fc7b534cb"
   },
   "observability": {
     "enabled": true
