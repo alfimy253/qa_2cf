@@ -1,2 +1,5 @@
 node_modules/
 .dev.vars
+# wrangler.jsonc carries the same values as .dev.vars in vars; keep it out of source control and use wrangler secret put or this package's npm run secrets instead.
+wrangler.jsonc
+
