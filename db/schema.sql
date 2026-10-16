@@ -31,9 +31,10 @@ CREATE TABLE IF NOT EXISTS tele_sites (
 );
 
 -- Owner sign-in accounts. The owner username, email and salted PBKDF2 password
--- hash live here; the generated runtime seeds the row from its ADMIN_* secrets
--- on first use and then keeps using the database copy. No raw password is ever
--- stored, and the hash is never returned by an API.
+-- hash live here, in the same Neon database as tele_client_accounts. The
+-- generated runtime inserts the row from its ADMIN_* values on the first live
+-- request after deploy, then keeps using the database copy. No raw password is
+-- ever stored, and the hash is never returned by an API.
 CREATE TABLE IF NOT EXISTS tele_admin_users (
   site_id text PRIMARY KEY REFERENCES tele_sites(site_id) ON DELETE CASCADE,
   username varchar(64) NOT NULL,
@@ -67,23 +68,23 @@ DROP INDEX IF EXISTS blog_posts_site_post_fk_idx;
 DROP INDEX IF EXISTS blog_posts_public_idx;
 
 -- Idempotent migration for earlier Canopy schemas: existing posts get an original
--- local cover image, while all new post writes must supply a non-empty feature image.
+-- local cover image for NULL legacy values. An empty URL means no post image.
 ALTER TABLE tele_blog_posts ADD COLUMN IF NOT EXISTS feature_image_url text;
 ALTER TABLE tele_blog_posts ADD COLUMN IF NOT EXISTS feature_image_alt varchar(180);
-UPDATE tele_blog_posts SET feature_image_url = '/images/blog-welcome.svg' WHERE feature_image_url IS NULL OR length(btrim(feature_image_url)) = 0;
+UPDATE tele_blog_posts SET feature_image_url = '/images/blog-welcome.svg' WHERE feature_image_url IS NULL;
 UPDATE tele_blog_posts SET feature_image_alt = 'Practice article feature image' WHERE feature_image_alt IS NULL OR length(btrim(feature_image_alt)) = 0;
 ALTER TABLE tele_blog_posts ALTER COLUMN feature_image_url SET NOT NULL;
 ALTER TABLE tele_blog_posts ALTER COLUMN feature_image_alt SET NOT NULL;
 ALTER TABLE tele_blog_posts ALTER COLUMN feature_image_url DROP DEFAULT;
 ALTER TABLE tele_blog_posts ALTER COLUMN feature_image_alt DROP DEFAULT;
+-- Bug Fix #214: optional single image URL, compatible with old databases.
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'tele_blog_posts'::regclass AND conname = 'tele_blog_posts_feature_image_nonempty') THEN
-    ALTER TABLE tele_blog_posts ADD CONSTRAINT tele_blog_posts_feature_image_nonempty CHECK (length(btrim(feature_image_url)) > 0);
-  END IF;
+  ALTER TABLE tele_blog_posts DROP CONSTRAINT IF EXISTS tele_blog_posts_feature_image_nonempty;
+  ALTER TABLE tele_blog_posts ADD COLUMN IF NOT EXISTS content_gallery jsonb NOT NULL DEFAULT '{"title":"","images":[]}'::jsonb;
 END $$;
 
--- Fixed-schema per-post image gallery. The first item by sort_order is the
--- featured hero image when the owner does not specify a separate feature image.
+-- Legacy article gallery retained for existing databases and safe cleanup.
+-- Bug Fix #214 uses only tele_blog_posts.feature_image_url; no new gallery writes.
 CREATE TABLE IF NOT EXISTS tele_blog_post_images (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   site_id text NOT NULL,

@@ -4,15 +4,41 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex,nofollow"><title>Site owner studio</title>
   <link rel="stylesheet" href="/site.css"><link rel="stylesheet" href="/admin.css">
-  <script src="/site-config.js" defer></script><script src="/brivon-fonts.js" defer></script><script src="/admin.js" defer></script>
-</head>
+  <script src="/site-config.js" defer></script><script src="/brivon-fonts.js" defer></script><script src="/admin.js" type="module"></script>
+<style data-content-gallery-style>
+[data-page-deleted]{display:none!important}
+.content-paragraph{display:block;white-space:pre-line;margin:0 0 1em}
+.paragraph-images{display:flex;width:100%;gap:0;margin:0 0 1em}
+.paragraph-images>img{display:block;flex:0 0 50%;width:50%;max-width:50%;object-fit:contain;align-self:flex-start}
+.paragraph-images>img:only-child{flex:0 0 100%;width:100%;max-width:100%}
+img[data-gallery-image]{cursor:zoom-in}img[data-gallery-image]:focus-visible{outline:3px solid #24644e;outline-offset:2px}
+.gallery-set{display:block;width:100%;margin:0 0 1em}.gallery-set-title{display:block;font-weight:700;margin:0 0 .5em}
+.gallery-set-grid .gallery-set-images{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0}
+.gallery-set-grid img{display:block;width:100%;max-width:100%;object-fit:contain;align-self:start}
+.gallery-set-grid img:only-child{grid-column:1/-1}
+.gallery-set-strip .gallery-set-images{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;padding-bottom:10px}
+.gallery-set-strip img{display:block;flex:0 0 75%;width:75%;max-width:75%;object-fit:contain;scroll-snap-align:start;align-self:flex-start}
+.gallery-set-strip img:only-child{flex:0 0 100%;width:100%;max-width:100%}
+.content-gallery-editor{margin:12px 0;padding:12px;border:1px solid #cbd5cb;border-radius:8px}
+.content-gallery-editor button,.content-gallery-modal button{cursor:pointer}.content-gallery-editor p{white-space:pre-line}
+.gallery-add-link{display:block;background:none;border:0;text-decoration:underline;color:#24644e;padding:8px 0}
+.content-gallery-overlay{position:fixed;inset:0;z-index:10000;background:#0008;display:grid;place-items:center;padding:20px}
+.content-gallery-modal{background:#fff;color:#20372c;border-radius:12px;padding:24px;width:min(700px,100%);max-height:90vh;overflow:auto}
+.content-gallery-modal label{display:block;margin:10px 0}.content-gallery-modal input,.content-gallery-modal select{display:block;width:100%;box-sizing:border-box;padding:10px}
+.content-gallery-modal img{display:block;max-width:100%;max-height:180px;margin:10px auto}.gallery-image-row{border-top:1px solid #ddd;padding:12px 0}
+.gallery-modal-actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:16px}.gallery-status{display:block;color:#8c3425;white-space:normal}
+.content-gallery-lightbox{position:fixed;inset:0;z-index:20000;display:flex;flex-direction:column;justify-content:center;align-items:center;background:rgba(0,0,0,.96);color:#fff;padding:20px;box-sizing:border-box}
+.content-gallery-lightbox>img{display:block;width:100%;height:calc(100vh - 150px);height:calc(100dvh - 150px);object-fit:contain;min-height:0}
+.content-gallery-lightbox button{background:#fff;color:#15261e;border:0;border-radius:6px;padding:12px;cursor:pointer}.content-gallery-lightbox button:focus-visible{outline:3px solid #92d4b3;outline-offset:3px}
+.gallery-lightbox-controls{display:flex;gap:16px;align-items:center;justify-content:center;flex-wrap:wrap;margin-top:12px}.gallery-lightbox-counter{margin:8px 0;min-height:1.5em}
+</style></head>
 <body class="admin-body">
   <header class="admin-topbar"><a class="site-brand" href="/" aria-label="View website"><span class="brand-symbol" id="adminSymbol">✳</span><span><strong id="adminBrandName">Practice studio</strong><small>WEBSITE OWNER</small></span></a><div class="admin-top-actions"><span class="owner-pill" id="ownerIdentity" hidden><i></i><span id="ownerEmail"></span></span><button type="button" class="preview-link admin-logout" id="logoutButton" hidden>Sign out</button><a href="/" class="preview-link">View website ↗</a></div></header>
   <main class="admin-wrap">
     <div class="admin-heading"><div><span class="admin-overline">PRACTICE WEBSITE</span><h1>Your site, your voice.</h1><p>Choose a page to update practice details, menu links, appearance, content, availability or appointments.</p></div><span class="save-indicator" id="saveIndicator"><i></i> Ready to edit</span></div>
     <section class="admin-login-panel panel-admin" id="loginPanel">
       <div class="login-icon">⌁</div><div class="login-copy"><strong>Owner sign in</strong><p>Use the username and password you set in the builder. Your admin email is kept with the account for reference.</p></div>
-      <form id="loginForm" class="admin-login-form" method="post" action="/api/admin/login" autocomplete="on"><label for="adminUsername">Username<input id="adminUsername" name="username" type="text" maxlength="64" autocomplete="username" required></label><label for="adminPassword">Password<input id="adminPassword" name="password" type="password" maxlength="25" minlength="8" autocomplete="current-password" required></label><button type="submit" class="admin-primary" id="loginButton">Sign in</button><small id="loginMessage" aria-live="polite">Sign-in fields are never prefilled into the public page.</small></form>
+      <form id="loginForm" class="admin-login-form" method="post" action="/api/admin/login" autocomplete="on"><label for="adminUsername">Username or email<input id="adminUsername" name="username" type="text" maxlength="254" autocomplete="username" required></label><label for="adminPassword">Password<input id="adminPassword" name="password" type="password" maxlength="25" minlength="8" autocomplete="current-password" required></label><button type="submit" class="admin-primary" id="loginButton">Sign in</button><small id="loginMessage" aria-live="polite">Sign-in fields are never prefilled into the public page.</small></form>
     </section>
     <section class="admin-grid" id="adminWorkspace" hidden>
       <nav class="admin-page-nav" aria-label="Website editing pages">
@@ -26,9 +52,14 @@
         <button type="button" data-admin-page-link="appointments" aria-controls="appointmentManager"><span class="admin-nav-number">07</span><span>Appointments</span></button>
         <button type="button" data-admin-page-link="payments" aria-controls="paymentsManager"><span class="admin-nav-number">08</span><span>Payments</span></button>
         <button type="button" data-admin-page-link="signin" aria-controls="adminPage-signin"><span class="admin-nav-number">09</span><span>Sign-in</span></button>
+        <button type="button" data-admin-page-link="pages"><span>↗</span><span>Pages</span></button>
         <small class="admin-page-nav-note">Your changes are saved to this practice site.</small>
       </nav>
       <div class="admin-main-column">
+        <section class="panel-admin admin-card" data-admin-page="pages" hidden>
+          <h2>Pages</h2><p>Open the homepage to edit text or delete paragraphs/sections. Custom pages use their content fields. Click Save page once to save directly to this deployed site—no export or rebuild is needed.</p>
+          <div id="ownerPagesEditor"></div>
+        </section>
         <section class="panel-admin admin-card" id="adminPage-identity" data-admin-page="identity">
           <div class="admin-card-heading"><div><span class="admin-section-index">01 / IDENTITY</span><h2>Practice details</h2><p>Keep your contact information current.</p></div><span class="card-icon">✳</span></div>
           <form id="siteForm" class="admin-form" method="post" action="/api/site">
@@ -53,10 +84,12 @@
           </form>
         </section>
         <section class="panel-admin admin-card blog-admin-card" id="blogEditor" data-admin-page="blog" hidden>
-          <div class="admin-card-heading"><div><span class="admin-section-index">04 / BLOG CMS</span><h2>Helpful notes, simply managed.</h2><p>Fixed post fields plus a required feature image and an optional image gallery.</p></div><span class="card-icon card-icon-blog">▤</span></div>
+          <div class="admin-card-heading"><div><span class="admin-section-index">04 / BLOG CMS</span><h2>Helpful notes, simply managed.</h2><p>One gallery per post. Separate paragraphs with two newlines. Insert individual images or the entire gallery as a set.</p></div><span class="card-icon card-icon-blog">▤</span></div>
+          <p id="postFormMessage" role="status" aria-live="polite"></p>
           <form id="postForm" class="admin-form post-form" method="post" action="/api/admin/posts">
             <input type="hidden" name="id">
-            <div class="admin-form-grid"><label><span>Post title</span><input name="title" maxlength="140" required placeholder="A useful note for your community"></label><label><span>URL slug</span><input name="slug" maxlength="160" placeholder="created-from-title"></label><label class="admin-full"><span>Short excerpt</span><input name="excerpt" maxlength="260" placeholder="A sentence or two that introduces the article"></label><label class="admin-full"><span>Article body</span><textarea name="body" rows="5" maxlength="12000" required placeholder="Write your article here. Plain text is supported."></textarea></label><label class="admin-full"><span>Feature image URL</span><input name="featureImageUrl" type="text" inputmode="url" maxlength="2048" placeholder="https://example.com/feature.jpg"><small>Required. Leave blank to use the first image in the post gallery below.</small></label><label class="admin-full"><span>Feature image alt text</span><input name="featureImageAlt" maxlength="180" placeholder="Describe the feature image"></label><div class="post-gallery-editor admin-full"><div class="post-gallery-heading"><span><strong>Article gallery</strong><small>Optional images appear after the article body.</small></span><button type="button" id="addPostGalleryImage">Add image</button></div><div class="post-gallery-note">If the feature image URL is blank, the first gallery image becomes the hero banner.</div><div id="postGalleryRows" class="post-gallery-rows"></div></div><label><span>Category</span><input name="category" maxlength="60" placeholder="Practice notes"></label><label><span>Publish status</span><select name="status"><option value="draft">Draft</option><option value="published">Published</option></select></label></div>
+            <figure class="post-image-preview" id="postImagePreviewWrap" hidden><img id="postImagePreview" alt="Blog image preview" referrerpolicy="no-referrer"><figcaption id="postImagePreviewMessage">Image URL preview</figcaption></figure>
+            <div class="admin-form-grid"><label><span>Post title</span><input name="title" maxlength="140" required placeholder="A useful note for your community"></label><label><span>Blog URL slug</span><input name="slug" maxlength="160" placeholder="created-from-title"><small id="postUrlPreview">/blog/created-from-title — leave blank to create it from the title.</small></label><label class="admin-full"><span>Short excerpt</span><input name="excerpt" maxlength="260" placeholder="A sentence or two that introduces the article"></label><label class="admin-full"><span>Article body</span><textarea name="body" rows="5" maxlength="12000" required placeholder="Write your article here. Plain text is supported."></textarea></label><div id="postParagraphGallery" class="admin-full"></div><label class="admin-full"><span>Feature image URL</span><input name="featureImageUrl" type="text" inputmode="url" maxlength="2048" placeholder="https://example.com/feature.jpg"><small>Optional cover image URL. Add paragraph images using the gallery below the article body. No uploads.</small></label><label class="admin-full"><span>Feature image alt text</span><input name="featureImageAlt" maxlength="180" placeholder="Describe the feature image"></label><label><span>Category</span><input name="category" maxlength="60" placeholder="Practice notes"></label><label><span>Publish status</span><select name="status"><option value="draft">Draft</option><option value="published">Published</option></select></label></div>
             <div class="admin-form-actions"><small>No custom post types or block editor—just the fields your team needs.</small><button type="submit" class="admin-primary">Save post</button></div>
           </form>
           <div class="posts-admin-list"><div class="posts-admin-header"><strong>Your posts</strong><span id="postCount">0 posts</span></div><div id="postsList" class="posts-list"><p class="empty-posts">Sign in to manage blog posts.</p></div></div>

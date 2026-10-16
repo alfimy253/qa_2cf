@@ -42,8 +42,8 @@
     "DATABASE_URL": "postgresql://carlamissiona:yhxjpBia4MA6@ep-round-moon-a1obo7oq-pooler.ap-southeast-1.aws.neon.tech/workers_db",
     "ADMIN_USERNAME": "admin",
     "ADMIN_EMAIL": "missiona.carla@gmail.com",
-    "ADMIN_PASSWORD_HASH": "pbkdf2$210000$veu0_JIXAF6hngw7BKHQAQ$BuSd9Hx5y7YDAuF2eF1-JTIp4o_3znwVs5Uc7w3mX5U",
-    "CSRF_SECRET": "b5d9feff939b73b4e0c91f4c0ee89612f13e2fb743631768268c6418493b06bc"
+    "ADMIN_PASSWORD_HASH": "pbkdf2$210000$gsjto-7Lf6ytMhyyYk_EnA$Av00PHRd1VqLinzlaUuURU9LILLZTeqg6tFIwluCzRo",
+    "CSRF_SECRET": "aed00bddaae15a130765a167661cdb74e7d65ecfc800746a5d058bd07ff375d4"
   },
   "observability": {
     "enabled": true

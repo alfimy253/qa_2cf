@@ -1,5 +1,7 @@
+import { normalizePageEdits } from '../lib/page-edits.js';
+import { normalizeContentGallery } from '../lib/content-gallery.js';
 import { createNeonClient } from '../db/connection.js';
-import { createAdminSession, PASSWORD_MAX, PASSWORD_MIN, verifyAdminSession, verifyPasswordHash } from '../lib/admin-security.js';
+import { createAdminSession, PASSWORD_MAX, PASSWORD_MIN, normalizePasswordHash, ownerLoginError, passwordHashWellFormed, verifyAdminSession, verifyPasswordHash } from '../lib/admin-security.js';
 import { adminDashboardPath, isAdminDashboardPath } from '../lib/admin-url.js';
 import { cleanMenuLinks } from '../lib/menu-links.js';
 import { normalizeSiteTheme } from '../lib/site-theme.js';
@@ -8,12 +10,12 @@ import { runPaymentReminderChecks } from '../lib/payment-reminders.js';
 import { databaseErrorMessage } from '../lib/db-errors.js';
 
 const SITE_ID = 'brightside-dental-studio';
-const DEFAULT_CONFIG = {"siteId":"brightside-dental-studio","target":"cloudflare","specialty":"dental","specialtyLabel":"Dental practice","businessName":"Brightside Dental Studio","brandName":"Brightside Dental","location":"Quezon City, Philippines","email":"hello@brightside.example","phone":"+63 2 8123 4567","timeZone":"Asia/Manila","theme":"brivon-light","editorialAccent":"black","primaryColor":"#506f00","accentColor":"#506f00","paperColor":"#f5f5ef","fontStyle":"serif","features":{"blog":true,"gallery":true,"scheduling":true},"payments":{"gcashName":"Brightside Dental Studio","gcashNumber":"+63 917 555 0134","mayaName":"Brightside Dental Studio","mayaNumber":"+63 918 555 0142"},"customPages":[],"menuLinks":[{"id":"home","label":"Welcome","href":"/#home"},{"id":"care","label":"Our care","href":"/#care"},{"id":"about","label":"Our approach","href":"/#about"},{"id":"gallery","label":"Gallery","href":"/#gallery","feature":"gallery"},{"id":"journal","label":"Journal","href":"/#journal","feature":"blog"},{"id":"appointments","label":"Appointments","href":"/appointments.html","feature":"scheduling"},{"id":"contact","label":"Contact","href":"/#contact"}],"heroEyebrow":"A BRIGHTER KIND OF DENTAL CARE","heroHeadline":"A reason to\nsmile easier.","heroText":"Modern, thoughtful dentistry with your comfort at the center.","services":["Preventive care","Restorative dentistry","Cosmetic treatments"],"demoPosts":[{"title":"A gentler start to your first visit","slug":"a-gentler-first-visit","excerpt":"A few simple ways we make a new-patient appointment feel clear and calm.","category":"First visits","body":"A first visit should feel like a conversation, not a checklist. We will take time to hear what matters to you, explain what we see, and make room for questions before deciding on any next steps.","id":"sample-1","featureImageUrl":"/images/blog-welcome.svg","featureImageAlt":"An open, welcoming practice doorway","gallery":[{"imageUrl":"/images/blog-welcome.svg","altText":"An open, welcoming practice doorway","caption":"A warm welcome and time to settle in.","sortOrder":0},{"imageUrl":"/images/blog-care-team.svg","altText":"A care team listening together","caption":"Questions are always part of the visit.","sortOrder":1}],"publishedAt":"2026-10-06T14:33:46.993Z"},{"title":"Small habits for a healthier smile","slug":"small-habits-healthier-smile","excerpt":"A steady routine can make looking after your smile feel more manageable.","category":"Everyday care","body":"A consistent brush-and-floss routine, regular checkups, and honest conversations can go a long way. If something feels confusing, bring it up at your next visit. Good care starts with understanding.","id":"sample-2","featureImageUrl":"/images/blog-small-moments.svg","featureImageAlt":"A sunlit still life with a flower and warm cup","gallery":[{"imageUrl":"/images/blog-small-moments.svg","altText":"A sunlit still life with a flower and warm cup","caption":"Small routines can make care feel easier.","sortOrder":0},{"imageUrl":"/images/blog-care-team.svg","altText":"A care team ready to listen","caption":"A little check-in can open a helpful conversation.","sortOrder":1}],"publishedAt":"2026-09-27T14:33:46.993Z"},{"title":"What to expect at a checkup","slug":"what-to-expect-at-a-checkup","excerpt":"Knowing what happens next can make a routine appointment feel easier.","category":"Your visit","body":"We will review your concerns, explain what we are checking, and pause whenever you need. You will leave with a clear summary and a chance to talk through any options.","id":"sample-3","featureImageUrl":"/images/blog-care-team.svg","featureImageAlt":"A practice team and companion in a calm room","gallery":[{"imageUrl":"/images/blog-care-team.svg","altText":"A practice team and companion in a calm room","caption":"A familiar team makes space for a slower hello.","sortOrder":0},{"imageUrl":"/images/blog-welcome.svg","altText":"A welcoming room with an open doorway","caption":"The first moments can move at your pace.","sortOrder":1}],"publishedAt":"2026-09-18T14:33:46.993Z"}],"demoGallery":[{"title":"A warm welcome","imageUrl":"","altText":"Illustrated gallery placeholder for a welcoming practice space","caption":"A friendly first impression starts at the door.","category":"Practice life","sortOrder":1,"status":"published"},{"title":"Care, at every stage","imageUrl":"","altText":"Illustrated gallery placeholder for a care moment","caption":"Thoughtful care for the everyday and the unexpected.","category":"Our approach","sortOrder":2,"status":"published"},{"title":"A little time to listen","imageUrl":"","altText":"Illustrated gallery placeholder for a conversation with the care team","caption":"Questions welcome. We will take the time.","category":"Team","sortOrder":3,"status":"published"}],"createdAt":"2026-10-15T14:33:46.993Z"};
+const DEFAULT_CONFIG = {"siteId":"brightside-dental-studio","target":"cloudflare","specialty":"dental","specialtyLabel":"Dental practice","businessName":"Brightside Dental Studio","brandName":"Brightside Dental","location":"Quezon City, Philippines","email":"company@brightside.example","phone":"+63 2 8123 4567","timeZone":"Asia/Manila","theme":"brivon-light","editorialAccent":"black","primaryColor":"#506f00","accentColor":"#506f00","paperColor":"#f5f5ef","fontStyle":"serif","features":{"blog":true,"gallery":true,"scheduling":true},"payments":{"gcashName":"Brightside Dental Studio","gcashNumber":"+63 917 555 0134","mayaName":"Brightside Dental Studio","mayaNumber":"+63 918 555 0142"},"customPages":[],"menuLinks":[{"id":"home","label":"Welcome","href":"/#home"},{"id":"care","label":"Our care","href":"/#care"},{"id":"about","label":"Our approach","href":"/#about"},{"id":"gallery","label":"Gallery","href":"/#gallery","feature":"gallery"},{"id":"journal","label":"Journal","href":"/#journal","feature":"blog"},{"id":"appointments","label":"Appointments","href":"/appointments.html","feature":"scheduling"},{"id":"contact","label":"Contact","href":"/#contact"}],"pageEdits":[],"heroEyebrow":"A BRIGHTER KIND OF DENTAL CARE","heroHeadline":"A reason to\nsmile easier.","heroText":"Modern, thoughtful dentistry with your comfort at the center.","services":["Preventive care","Restorative dentistry","Cosmetic treatments"],"demoPosts":[{"title":"A gentler start to your first visit","slug":"a-gentler-first-visit","excerpt":"A few simple ways we make a new-patient appointment feel clear and calm.","category":"First visits","body":"A first visit should feel like a conversation, not a checklist. We will take time to hear what matters to you, explain what we see, and make room for questions before deciding on any next steps.","id":"sample-1","featureImageUrl":"/images/blog-welcome.svg","featureImageAlt":"An open, welcoming practice doorway","publishedAt":"2026-10-07T13:11:48.252Z"},{"title":"Small habits for a healthier smile","slug":"small-habits-healthier-smile","excerpt":"A steady routine can make looking after your smile feel more manageable.","category":"Everyday care","body":"A consistent brush-and-floss routine, regular checkups, and honest conversations can go a long way. If something feels confusing, bring it up at your next visit. Good care starts with understanding.","id":"sample-2","featureImageUrl":"/images/blog-small-moments.svg","featureImageAlt":"A sunlit still life with a flower and warm cup","publishedAt":"2026-09-28T13:11:48.252Z"},{"title":"What to expect at a checkup","slug":"what-to-expect-at-a-checkup","excerpt":"Knowing what happens next can make a routine appointment feel easier.","category":"Your visit","body":"We will review your concerns, explain what we are checking, and pause whenever you need. You will leave with a clear summary and a chance to talk through any options.","id":"sample-3","featureImageUrl":"/images/blog-care-team.svg","featureImageAlt":"A practice team and companion in a calm room","publishedAt":"2026-09-19T13:11:48.252Z"}],"demoGallery":[{"title":"A warm welcome","imageUrl":"","altText":"Illustrated gallery placeholder for a welcoming practice space","caption":"A friendly first impression starts at the door.","category":"Practice life","sortOrder":1,"status":"published"},{"title":"Care, at every stage","imageUrl":"","altText":"Illustrated gallery placeholder for a care moment","caption":"Thoughtful care for the everyday and the unexpected.","category":"Our approach","sortOrder":2,"status":"published"},{"title":"A little time to listen","imageUrl":"","altText":"Illustrated gallery placeholder for a conversation with the care team","caption":"Questions welcome. We will take the time.","category":"Team","sortOrder":3,"status":"published"}],"createdAt":"2026-10-16T13:11:48.252Z"};
 // db/schema.sql, split into single statements by the builder and applied as one
 // transaction the first time this isolate touches the database, so a fresh Neon
 // URL gets its tele_* tables without a manual step. The same file remains in
 // db/schema.sql for manual or pre-provisioned setups.
-const SCHEMA_STATEMENTS = ["-- Every table in this package uses the tele_ prefix so one Neon database can\n-- hold several apps without name collisions. SITE_ID still scopes every row to\n-- one practice site.\n--\n-- This file is idempotent, and the generated runtime also applies it\n-- automatically (as a single transaction) the first time it touches the\n-- database, so a fresh Neon URL gets its tables without a manual step.\n-- Running it by hand is still supported and safe.\n\n-- Older builds of this package used unprefixed names. Rename them in place so an\n-- existing deployment keeps its content instead of starting from empty tables.\nDO $$ BEGIN\n  IF to_regclass('public.sites') IS NOT NULL AND to_regclass('public.tele_sites') IS NULL THEN ALTER TABLE sites RENAME TO tele_sites; END IF;\n  IF to_regclass('public.blog_posts') IS NOT NULL AND to_regclass('public.tele_blog_posts') IS NULL THEN ALTER TABLE blog_posts RENAME TO tele_blog_posts; END IF;\n  IF to_regclass('public.blog_post_images') IS NOT NULL AND to_regclass('public.tele_blog_post_images') IS NULL THEN ALTER TABLE blog_post_images RENAME TO tele_blog_post_images; END IF;\n  IF to_regclass('public.gallery_items') IS NOT NULL AND to_regclass('public.tele_gallery_items') IS NULL THEN ALTER TABLE gallery_items RENAME TO tele_gallery_items; END IF;\n  IF to_regclass('public.client_accounts') IS NOT NULL AND to_regclass('public.tele_client_accounts') IS NULL THEN ALTER TABLE client_accounts RENAME TO tele_client_accounts; END IF;\n  IF to_regclass('public.client_sessions') IS NOT NULL AND to_regclass('public.tele_client_sessions') IS NULL THEN ALTER TABLE client_sessions RENAME TO tele_client_sessions; END IF;\n  IF to_regclass('public.monthly_schedules') IS NOT NULL AND to_regclass('public.tele_monthly_schedules') IS NULL THEN ALTER TABLE monthly_schedules RENAME TO tele_monthly_schedules; END IF;\n  IF to_regclass('public.consultation_slots') IS NOT NULL AND to_regclass('public.tele_consultation_slots') IS NULL THEN ALTER TABLE consultation_slots RENAME TO tele_consultation_slots; END IF;\n  IF to_regclass('public.appointments') IS NOT NULL AND to_regclass('public.tele_appointments') IS NULL THEN ALTER TABLE appointments RENAME TO tele_appointments; END IF;\n  IF to_regclass('public.appointment_payment_proofs') IS NOT NULL AND to_regclass('public.tele_appointment_payment_proofs') IS NULL THEN ALTER TABLE appointment_payment_proofs RENAME TO tele_appointment_payment_proofs; END IF;\n  IF to_regclass('public.consultation_notes') IS NOT NULL AND to_regclass('public.tele_consultation_notes') IS NULL THEN ALTER TABLE consultation_notes RENAME TO tele_consultation_notes; END IF;\nEND $$","CREATE TABLE IF NOT EXISTS tele_sites (\n  site_id text PRIMARY KEY,\n  config jsonb NOT NULL,\n  created_at timestamptz NOT NULL DEFAULT now(),\n  updated_at timestamptz NOT NULL DEFAULT now()\n)","-- Owner sign-in accounts. The owner username, email and salted PBKDF2 password\n-- hash live here; the generated runtime seeds the row from its ADMIN_* secrets\n-- on first use and then keeps using the database copy. No raw password is ever\n-- stored, and the hash is never returned by an API.\nCREATE TABLE IF NOT EXISTS tele_admin_users (\n  site_id text PRIMARY KEY REFERENCES tele_sites(site_id) ON DELETE CASCADE,\n  username varchar(64) NOT NULL,\n  email varchar(254) NOT NULL,\n  password_hash text NOT NULL,\n  created_at timestamptz NOT NULL DEFAULT now(),\n  updated_at timestamptz NOT NULL DEFAULT now(),\n  CHECK (username ~ '^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$')\n)","-- Fixed blog schema by design: no custom content types or arbitrary blocks.\nCREATE TABLE IF NOT EXISTS tele_blog_posts (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  site_id text NOT NULL REFERENCES tele_sites(site_id) ON DELETE CASCADE,\n  title varchar(140) NOT NULL,\n  slug varchar(160) NOT NULL,\n  excerpt varchar(260) NOT NULL DEFAULT '',\n  body text NOT NULL,\n  feature_image_url text NOT NULL,\n  feature_image_alt varchar(180) NOT NULL,\n  category varchar(60) NOT NULL DEFAULT 'Practice notes',\n  status varchar(12) NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published')),\n  published_at timestamptz,\n  created_at timestamptz NOT NULL DEFAULT now(),\n  updated_at timestamptz NOT NULL DEFAULT now(),\n  UNIQUE (site_id, slug)\n)","CREATE UNIQUE INDEX IF NOT EXISTS tele_blog_posts_site_post_fk_idx ON tele_blog_posts(site_id, id)","CREATE INDEX IF NOT EXISTS tele_blog_posts_public_idx ON tele_blog_posts(site_id, status, published_at DESC)","DROP INDEX IF EXISTS blog_posts_site_post_fk_idx","DROP INDEX IF EXISTS blog_posts_public_idx","-- Idempotent migration for earlier Canopy schemas: existing posts get an original\n-- local cover image, while all new post writes must supply a non-empty feature image.\nALTER TABLE tele_blog_posts ADD COLUMN IF NOT EXISTS feature_image_url text","ALTER TABLE tele_blog_posts ADD COLUMN IF NOT EXISTS feature_image_alt varchar(180)","UPDATE tele_blog_posts SET feature_image_url = '/images/blog-welcome.svg' WHERE feature_image_url IS NULL OR length(btrim(feature_image_url)) = 0","UPDATE tele_blog_posts SET feature_image_alt = 'Practice article feature image' WHERE feature_image_alt IS NULL OR length(btrim(feature_image_alt)) = 0","ALTER TABLE tele_blog_posts ALTER COLUMN feature_image_url SET NOT NULL","ALTER TABLE tele_blog_posts ALTER COLUMN feature_image_alt SET NOT NULL","ALTER TABLE tele_blog_posts ALTER COLUMN feature_image_url DROP DEFAULT","ALTER TABLE tele_blog_posts ALTER COLUMN feature_image_alt DROP DEFAULT","DO $$ BEGIN\n  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'tele_blog_posts'::regclass AND conname = 'tele_blog_posts_feature_image_nonempty') THEN\n    ALTER TABLE tele_blog_posts ADD CONSTRAINT tele_blog_posts_feature_image_nonempty CHECK (length(btrim(feature_image_url)) > 0);\n  END IF;\nEND $$","-- Fixed-schema per-post image gallery. The first item by sort_order is the\n-- featured hero image when the owner does not specify a separate feature image.\nCREATE TABLE IF NOT EXISTS tele_blog_post_images (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  site_id text NOT NULL,\n  post_id uuid NOT NULL,\n  image_url text NOT NULL,\n  alt_text varchar(180) NOT NULL,\n  caption varchar(300) NOT NULL DEFAULT '',\n  sort_order integer NOT NULL DEFAULT 0 CHECK (sort_order >= 0 AND sort_order \u003c= 11),\n  created_at timestamptz NOT NULL DEFAULT now(),\n  updated_at timestamptz NOT NULL DEFAULT now(),\n  FOREIGN KEY (site_id, post_id) REFERENCES tele_blog_posts(site_id, id) ON DELETE CASCADE,\n  UNIQUE (post_id, sort_order)\n)","CREATE INDEX IF NOT EXISTS tele_blog_post_images_order_idx ON tele_blog_post_images(site_id, post_id, sort_order)","DROP INDEX IF EXISTS blog_post_images_order_idx","-- Fixed practice-wide gallery, separate from article-attached galleries.\nCREATE TABLE IF NOT EXISTS tele_gallery_items (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  site_id text NOT NULL REFERENCES tele_sites(site_id) ON DELETE CASCADE,\n  title varchar(120) NOT NULL,\n  image_url text NOT NULL DEFAULT '',\n  alt_text varchar(180) NOT NULL DEFAULT '',\n  caption varchar(300) NOT NULL DEFAULT '',\n  category varchar(60) NOT NULL DEFAULT 'Practice life',\n  status varchar(12) NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published')),\n  sort_order integer NOT NULL DEFAULT 0 CHECK (sort_order >= 0 AND sort_order \u003c= 9999),\n  created_at timestamptz NOT NULL DEFAULT now(),\n  updated_at timestamptz NOT NULL DEFAULT now()\n)","CREATE INDEX IF NOT EXISTS tele_gallery_items_public_idx ON tele_gallery_items(site_id, status, sort_order, created_at DESC)","DROP INDEX IF EXISTS gallery_items_public_idx","-- Self-service client accounts. Passwords are stored only as salted PBKDF2 hashes;\n-- raw session tokens are never written to the database.\nCREATE TABLE IF NOT EXISTS tele_client_accounts (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  site_id text NOT NULL REFERENCES tele_sites(site_id) ON DELETE CASCADE,\n  full_name varchar(100) NOT NULL,\n  email varchar(120) NOT NULL,\n  phone varchar(30) NOT NULL,\n  password_hash text NOT NULL,\n  created_at timestamptz NOT NULL DEFAULT now(),\n  updated_at timestamptz NOT NULL DEFAULT now(),\n  UNIQUE (site_id, email)\n)","CREATE INDEX IF NOT EXISTS tele_client_accounts_site_idx ON tele_client_accounts(site_id, created_at DESC)","DROP INDEX IF EXISTS client_accounts_site_idx","CREATE TABLE IF NOT EXISTS tele_client_sessions (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  site_id text NOT NULL REFERENCES tele_sites(site_id) ON DELETE CASCADE,\n  client_account_id uuid NOT NULL REFERENCES tele_client_accounts(id) ON DELETE CASCADE,\n  token_hash char(64) NOT NULL,\n  expires_at timestamptz NOT NULL,\n  created_at timestamptz NOT NULL DEFAULT now(),\n  UNIQUE (site_id, token_hash)\n)","CREATE INDEX IF NOT EXISTS tele_client_sessions_expiry_idx ON tele_client_sessions(site_id, expires_at)","DROP INDEX IF EXISTS client_sessions_expiry_idx","-- Owner-published schedule for each upcoming month. Weekly rules generate the\n-- normal slots; date exceptions replace a day's hours or close that date.\nCREATE TABLE IF NOT EXISTS tele_monthly_schedules (\n  site_id text NOT NULL REFERENCES tele_sites(site_id) ON DELETE CASCADE,\n  month_start date NOT NULL CHECK (date_trunc('month', month_start)::date = month_start),\n  weekly_rules jsonb NOT NULL DEFAULT '[]'::jsonb,\n  exceptions jsonb NOT NULL DEFAULT '[]'::jsonb,\n  status varchar(12) NOT NULL DEFAULT 'published' CHECK (status IN ('published')),\n  published_at timestamptz NOT NULL DEFAULT now(),\n  updated_at timestamptz NOT NULL DEFAULT now(),\n  PRIMARY KEY (site_id, month_start)\n)","CREATE TABLE IF NOT EXISTS tele_consultation_slots (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  site_id text NOT NULL,\n  month_start date NOT NULL,\n  slot_date date NOT NULL,\n  slot_time time NOT NULL,\n  is_open boolean NOT NULL DEFAULT true,\n  created_at timestamptz NOT NULL DEFAULT now(),\n  updated_at timestamptz NOT NULL DEFAULT now(),\n  FOREIGN KEY (site_id, month_start) REFERENCES tele_monthly_schedules(site_id, month_start) ON DELETE CASCADE,\n  CHECK (slot_date >= month_start AND slot_date \u003c (month_start + interval '1 month')::date),\n  UNIQUE (site_id, slot_date, slot_time)\n)","CREATE INDEX IF NOT EXISTS tele_consultation_slots_month_idx ON tele_consultation_slots(site_id, month_start, slot_date, slot_time)","DROP INDEX IF EXISTS consultation_slots_month_idx","CREATE TABLE IF NOT EXISTS tele_appointments (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  site_id text NOT NULL REFERENCES tele_sites(site_id) ON DELETE CASCADE,\n  client_account_id uuid,\n  availability_slot_id uuid,\n  name varchar(100) NOT NULL,\n  email varchar(120) NOT NULL,\n  phone varchar(30) NOT NULL,\n  service varchar(120) NOT NULL,\n  appointment_date date NOT NULL,\n  appointment_time time NOT NULL,\n  context varchar(100) NOT NULL DEFAULT '',\n  status varchar(12) NOT NULL DEFAULT 'requested' CHECK (status IN ('requested', 'confirmed', 'cancelled')),\n  payment_method varchar(12) NOT NULL DEFAULT 'gcash' CHECK (payment_method IN ('gcash', 'maya')),\n  payment_status varchar(20) NOT NULL DEFAULT 'approved' CHECK (payment_status IN ('awaiting_proof', 'pending_review', 'approved', 'rejected', 'expired')),\n  payment_due_at timestamptz NOT NULL DEFAULT now(),\n  payment_reminder_sent_at timestamptz,\n  payment_owner_attention_at timestamptz,\n  payment_manual_received_at timestamptz,\n  created_at timestamptz NOT NULL DEFAULT now()\n)","-- Idempotent migration for existing appointment tables and their new account/slot relations.\nALTER TABLE tele_appointments ADD COLUMN IF NOT EXISTS client_account_id uuid","ALTER TABLE tele_appointments ADD COLUMN IF NOT EXISTS availability_slot_id uuid","ALTER TABLE tele_appointments ADD COLUMN IF NOT EXISTS payment_method varchar(12) NOT NULL DEFAULT 'gcash' CHECK (payment_method IN ('gcash', 'maya'))","ALTER TABLE tele_appointments ADD COLUMN IF NOT EXISTS payment_status varchar(20) NOT NULL DEFAULT 'approved' CHECK (payment_status IN ('awaiting_proof', 'pending_review', 'approved', 'rejected', 'expired'))","ALTER TABLE tele_appointments ADD COLUMN IF NOT EXISTS payment_due_at timestamptz NOT NULL DEFAULT now()","ALTER TABLE tele_appointments ADD COLUMN IF NOT EXISTS payment_reminder_sent_at timestamptz","ALTER TABLE tele_appointments ADD COLUMN IF NOT EXISTS payment_owner_attention_at timestamptz","ALTER TABLE tele_appointments ADD COLUMN IF NOT EXISTS payment_manual_received_at timestamptz","DO $$ BEGIN\n  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'tele_appointments'::regclass AND conname = 'tele_appointments_client_account_fk') THEN\n    ALTER TABLE tele_appointments ADD CONSTRAINT tele_appointments_client_account_fk FOREIGN KEY (client_account_id) REFERENCES tele_client_accounts(id) ON DELETE SET NULL;\n  END IF;\n  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'tele_appointments'::regclass AND conname = 'tele_appointments_availability_slot_fk') THEN\n    ALTER TABLE tele_appointments ADD CONSTRAINT tele_appointments_availability_slot_fk FOREIGN KEY (availability_slot_id) REFERENCES tele_consultation_slots(id) ON DELETE SET NULL;\n  END IF;\nEND $$","CREATE UNIQUE INDEX IF NOT EXISTS tele_appointments_slot_idx\n  ON tele_appointments(site_id, appointment_date, appointment_time)\n  WHERE status \u003c> 'cancelled'","CREATE UNIQUE INDEX IF NOT EXISTS tele_appointments_availability_slot_idx\n  ON tele_appointments(site_id, availability_slot_id)\n  WHERE availability_slot_id IS NOT NULL AND status \u003c> 'cancelled'","CREATE INDEX IF NOT EXISTS tele_appointments_client_idx ON tele_appointments(site_id, client_account_id, appointment_date, appointment_time)","CREATE INDEX IF NOT EXISTS tele_appointments_date_idx ON tele_appointments(site_id, appointment_date, status)","CREATE INDEX IF NOT EXISTS tele_appointments_payment_due_idx ON tele_appointments(site_id, payment_status, payment_due_at) WHERE status \u003c> 'cancelled'","DROP INDEX IF EXISTS appointments_slot_idx","DROP INDEX IF EXISTS appointments_availability_slot_idx","DROP INDEX IF EXISTS appointments_client_idx","DROP INDEX IF EXISTS appointments_date_idx","DROP INDEX IF EXISTS appointments_payment_due_idx","-- Private proof images are stored as bounded base64 in Neon, never in public assets.\n-- The owner-only API serves proof bytes after session authentication.\nCREATE TABLE IF NOT EXISTS tele_appointment_payment_proofs (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  site_id text NOT NULL REFERENCES tele_sites(site_id) ON DELETE CASCADE,\n  appointment_id uuid NOT NULL REFERENCES tele_appointments(id) ON DELETE CASCADE,\n  client_account_id uuid NOT NULL REFERENCES tele_client_accounts(id) ON DELETE CASCADE,\n  payment_method varchar(12) NOT NULL CHECK (payment_method IN ('gcash', 'maya')),\n  image_mime_type varchar(20) NOT NULL CHECK (image_mime_type IN ('image/jpeg', 'image/png', 'image/webp')),\n  image_base64 text NOT NULL CHECK (length(image_base64) BETWEEN 16 AND 4194304),\n  review_status varchar(20) NOT NULL DEFAULT 'pending_review' CHECK (review_status IN ('pending_review', 'approved', 'rejected')),\n  uploaded_at timestamptz NOT NULL DEFAULT now(),\n  reviewed_at timestamptz,\n  UNIQUE (site_id, appointment_id)\n)","CREATE INDEX IF NOT EXISTS tele_appointment_payment_proofs_status_idx ON tele_appointment_payment_proofs(site_id, review_status, uploaded_at DESC)","DROP INDEX IF EXISTS appointment_payment_proofs_status_idx","-- One optional private owner-to-client note per consultation. The client API only\n-- returns a note when the authenticated account owns that appointment.\nCREATE TABLE IF NOT EXISTS tele_consultation_notes (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  site_id text NOT NULL REFERENCES tele_sites(site_id) ON DELETE CASCADE,\n  appointment_id uuid NOT NULL REFERENCES tele_appointments(id) ON DELETE CASCADE,\n  client_account_id uuid NOT NULL REFERENCES tele_client_accounts(id) ON DELETE CASCADE,\n  note_body text NOT NULL CHECK (length(btrim(note_body)) > 0 AND length(note_body) \u003c= 12000),\n  created_at timestamptz NOT NULL DEFAULT now(),\n  updated_at timestamptz NOT NULL DEFAULT now(),\n  UNIQUE (site_id, appointment_id)\n)","CREATE INDEX IF NOT EXISTS tele_consultation_notes_client_idx ON tele_consultation_notes(site_id, client_account_id, updated_at DESC)","DROP INDEX IF EXISTS consultation_notes_client_idx"];
+const SCHEMA_STATEMENTS = ["-- Every table in this package uses the tele_ prefix so one Neon database can\n-- hold several apps without name collisions. SITE_ID still scopes every row to\n-- one practice site.\n--\n-- This file is idempotent, and the generated runtime also applies it\n-- automatically (as a single transaction) the first time it touches the\n-- database, so a fresh Neon URL gets its tables without a manual step.\n-- Running it by hand is still supported and safe.\n\n-- Older builds of this package used unprefixed names. Rename them in place so an\n-- existing deployment keeps its content instead of starting from empty tables.\nDO $$ BEGIN\n  IF to_regclass('public.sites') IS NOT NULL AND to_regclass('public.tele_sites') IS NULL THEN ALTER TABLE sites RENAME TO tele_sites; END IF;\n  IF to_regclass('public.blog_posts') IS NOT NULL AND to_regclass('public.tele_blog_posts') IS NULL THEN ALTER TABLE blog_posts RENAME TO tele_blog_posts; END IF;\n  IF to_regclass('public.blog_post_images') IS NOT NULL AND to_regclass('public.tele_blog_post_images') IS NULL THEN ALTER TABLE blog_post_images RENAME TO tele_blog_post_images; END IF;\n  IF to_regclass('public.gallery_items') IS NOT NULL AND to_regclass('public.tele_gallery_items') IS NULL THEN ALTER TABLE gallery_items RENAME TO tele_gallery_items; END IF;\n  IF to_regclass('public.client_accounts') IS NOT NULL AND to_regclass('public.tele_client_accounts') IS NULL THEN ALTER TABLE client_accounts RENAME TO tele_client_accounts; END IF;\n  IF to_regclass('public.client_sessions') IS NOT NULL AND to_regclass('public.tele_client_sessions') IS NULL THEN ALTER TABLE client_sessions RENAME TO tele_client_sessions; END IF;\n  IF to_regclass('public.monthly_schedules') IS NOT NULL AND to_regclass('public.tele_monthly_schedules') IS NULL THEN ALTER TABLE monthly_schedules RENAME TO tele_monthly_schedules; END IF;\n  IF to_regclass('public.consultation_slots') IS NOT NULL AND to_regclass('public.tele_consultation_slots') IS NULL THEN ALTER TABLE consultation_slots RENAME TO tele_consultation_slots; END IF;\n  IF to_regclass('public.appointments') IS NOT NULL AND to_regclass('public.tele_appointments') IS NULL THEN ALTER TABLE appointments RENAME TO tele_appointments; END IF;\n  IF to_regclass('public.appointment_payment_proofs') IS NOT NULL AND to_regclass('public.tele_appointment_payment_proofs') IS NULL THEN ALTER TABLE appointment_payment_proofs RENAME TO tele_appointment_payment_proofs; END IF;\n  IF to_regclass('public.consultation_notes') IS NOT NULL AND to_regclass('public.tele_consultation_notes') IS NULL THEN ALTER TABLE consultation_notes RENAME TO tele_consultation_notes; END IF;\nEND $$","CREATE TABLE IF NOT EXISTS tele_sites (\n  site_id text PRIMARY KEY,\n  config jsonb NOT NULL,\n  created_at timestamptz NOT NULL DEFAULT now(),\n  updated_at timestamptz NOT NULL DEFAULT now()\n)","-- Owner sign-in accounts. The owner username, email and salted PBKDF2 password\n-- hash live here, in the same Neon database as tele_client_accounts. The\n-- generated runtime inserts the row from its ADMIN_* values on the first live\n-- request after deploy, then keeps using the database copy. No raw password is\n-- ever stored, and the hash is never returned by an API.\nCREATE TABLE IF NOT EXISTS tele_admin_users (\n  site_id text PRIMARY KEY REFERENCES tele_sites(site_id) ON DELETE CASCADE,\n  username varchar(64) NOT NULL,\n  email varchar(254) NOT NULL,\n  password_hash text NOT NULL,\n  created_at timestamptz NOT NULL DEFAULT now(),\n  updated_at timestamptz NOT NULL DEFAULT now(),\n  CHECK (username ~ '^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$')\n)","-- Fixed blog schema by design: no custom content types or arbitrary blocks.\nCREATE TABLE IF NOT EXISTS tele_blog_posts (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  site_id text NOT NULL REFERENCES tele_sites(site_id) ON DELETE CASCADE,\n  title varchar(140) NOT NULL,\n  slug varchar(160) NOT NULL,\n  excerpt varchar(260) NOT NULL DEFAULT '',\n  body text NOT NULL,\n  feature_image_url text NOT NULL,\n  feature_image_alt varchar(180) NOT NULL,\n  category varchar(60) NOT NULL DEFAULT 'Practice notes',\n  status varchar(12) NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published')),\n  published_at timestamptz,\n  created_at timestamptz NOT NULL DEFAULT now(),\n  updated_at timestamptz NOT NULL DEFAULT now(),\n  UNIQUE (site_id, slug)\n)","CREATE UNIQUE INDEX IF NOT EXISTS tele_blog_posts_site_post_fk_idx ON tele_blog_posts(site_id, id)","CREATE INDEX IF NOT EXISTS tele_blog_posts_public_idx ON tele_blog_posts(site_id, status, published_at DESC)","DROP INDEX IF EXISTS blog_posts_site_post_fk_idx","DROP INDEX IF EXISTS blog_posts_public_idx","-- Idempotent migration for earlier Canopy schemas: existing posts get an original\n-- local cover image for NULL legacy values. An empty URL means no post image.\nALTER TABLE tele_blog_posts ADD COLUMN IF NOT EXISTS feature_image_url text","ALTER TABLE tele_blog_posts ADD COLUMN IF NOT EXISTS feature_image_alt varchar(180)","UPDATE tele_blog_posts SET feature_image_url = '/images/blog-welcome.svg' WHERE feature_image_url IS NULL","UPDATE tele_blog_posts SET feature_image_alt = 'Practice article feature image' WHERE feature_image_alt IS NULL OR length(btrim(feature_image_alt)) = 0","ALTER TABLE tele_blog_posts ALTER COLUMN feature_image_url SET NOT NULL","ALTER TABLE tele_blog_posts ALTER COLUMN feature_image_alt SET NOT NULL","ALTER TABLE tele_blog_posts ALTER COLUMN feature_image_url DROP DEFAULT","ALTER TABLE tele_blog_posts ALTER COLUMN feature_image_alt DROP DEFAULT","-- Bug Fix #214: optional single image URL, compatible with old databases.\nDO $$ BEGIN\n  ALTER TABLE tele_blog_posts DROP CONSTRAINT IF EXISTS tele_blog_posts_feature_image_nonempty;\n  ALTER TABLE tele_blog_posts ADD COLUMN IF NOT EXISTS content_gallery jsonb NOT NULL DEFAULT '{\"title\":\"\",\"images\":[]}'::jsonb;\nEND $$","-- Legacy article gallery retained for existing databases and safe cleanup.\n-- Bug Fix #214 uses only tele_blog_posts.feature_image_url; no new gallery writes.\nCREATE TABLE IF NOT EXISTS tele_blog_post_images (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  site_id text NOT NULL,\n  post_id uuid NOT NULL,\n  image_url text NOT NULL,\n  alt_text varchar(180) NOT NULL,\n  caption varchar(300) NOT NULL DEFAULT '',\n  sort_order integer NOT NULL DEFAULT 0 CHECK (sort_order >= 0 AND sort_order \u003c= 11),\n  created_at timestamptz NOT NULL DEFAULT now(),\n  updated_at timestamptz NOT NULL DEFAULT now(),\n  FOREIGN KEY (site_id, post_id) REFERENCES tele_blog_posts(site_id, id) ON DELETE CASCADE,\n  UNIQUE (post_id, sort_order)\n)","CREATE INDEX IF NOT EXISTS tele_blog_post_images_order_idx ON tele_blog_post_images(site_id, post_id, sort_order)","DROP INDEX IF EXISTS blog_post_images_order_idx","-- Fixed practice-wide gallery, separate from article-attached galleries.\nCREATE TABLE IF NOT EXISTS tele_gallery_items (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  site_id text NOT NULL REFERENCES tele_sites(site_id) ON DELETE CASCADE,\n  title varchar(120) NOT NULL,\n  image_url text NOT NULL DEFAULT '',\n  alt_text varchar(180) NOT NULL DEFAULT '',\n  caption varchar(300) NOT NULL DEFAULT '',\n  category varchar(60) NOT NULL DEFAULT 'Practice life',\n  status varchar(12) NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published')),\n  sort_order integer NOT NULL DEFAULT 0 CHECK (sort_order >= 0 AND sort_order \u003c= 9999),\n  created_at timestamptz NOT NULL DEFAULT now(),\n  updated_at timestamptz NOT NULL DEFAULT now()\n)","CREATE INDEX IF NOT EXISTS tele_gallery_items_public_idx ON tele_gallery_items(site_id, status, sort_order, created_at DESC)","DROP INDEX IF EXISTS gallery_items_public_idx","-- Self-service client accounts. Passwords are stored only as salted PBKDF2 hashes;\n-- raw session tokens are never written to the database.\nCREATE TABLE IF NOT EXISTS tele_client_accounts (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  site_id text NOT NULL REFERENCES tele_sites(site_id) ON DELETE CASCADE,\n  full_name varchar(100) NOT NULL,\n  email varchar(120) NOT NULL,\n  phone varchar(30) NOT NULL,\n  password_hash text NOT NULL,\n  created_at timestamptz NOT NULL DEFAULT now(),\n  updated_at timestamptz NOT NULL DEFAULT now(),\n  UNIQUE (site_id, email)\n)","CREATE INDEX IF NOT EXISTS tele_client_accounts_site_idx ON tele_client_accounts(site_id, created_at DESC)","DROP INDEX IF EXISTS client_accounts_site_idx","CREATE TABLE IF NOT EXISTS tele_client_sessions (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  site_id text NOT NULL REFERENCES tele_sites(site_id) ON DELETE CASCADE,\n  client_account_id uuid NOT NULL REFERENCES tele_client_accounts(id) ON DELETE CASCADE,\n  token_hash char(64) NOT NULL,\n  expires_at timestamptz NOT NULL,\n  created_at timestamptz NOT NULL DEFAULT now(),\n  UNIQUE (site_id, token_hash)\n)","CREATE INDEX IF NOT EXISTS tele_client_sessions_expiry_idx ON tele_client_sessions(site_id, expires_at)","DROP INDEX IF EXISTS client_sessions_expiry_idx","-- Owner-published schedule for each upcoming month. Weekly rules generate the\n-- normal slots; date exceptions replace a day's hours or close that date.\nCREATE TABLE IF NOT EXISTS tele_monthly_schedules (\n  site_id text NOT NULL REFERENCES tele_sites(site_id) ON DELETE CASCADE,\n  month_start date NOT NULL CHECK (date_trunc('month', month_start)::date = month_start),\n  weekly_rules jsonb NOT NULL DEFAULT '[]'::jsonb,\n  exceptions jsonb NOT NULL DEFAULT '[]'::jsonb,\n  status varchar(12) NOT NULL DEFAULT 'published' CHECK (status IN ('published')),\n  published_at timestamptz NOT NULL DEFAULT now(),\n  updated_at timestamptz NOT NULL DEFAULT now(),\n  PRIMARY KEY (site_id, month_start)\n)","CREATE TABLE IF NOT EXISTS tele_consultation_slots (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  site_id text NOT NULL,\n  month_start date NOT NULL,\n  slot_date date NOT NULL,\n  slot_time time NOT NULL,\n  is_open boolean NOT NULL DEFAULT true,\n  created_at timestamptz NOT NULL DEFAULT now(),\n  updated_at timestamptz NOT NULL DEFAULT now(),\n  FOREIGN KEY (site_id, month_start) REFERENCES tele_monthly_schedules(site_id, month_start) ON DELETE CASCADE,\n  CHECK (slot_date >= month_start AND slot_date \u003c (month_start + interval '1 month')::date),\n  UNIQUE (site_id, slot_date, slot_time)\n)","CREATE INDEX IF NOT EXISTS tele_consultation_slots_month_idx ON tele_consultation_slots(site_id, month_start, slot_date, slot_time)","DROP INDEX IF EXISTS consultation_slots_month_idx","CREATE TABLE IF NOT EXISTS tele_appointments (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  site_id text NOT NULL REFERENCES tele_sites(site_id) ON DELETE CASCADE,\n  client_account_id uuid,\n  availability_slot_id uuid,\n  name varchar(100) NOT NULL,\n  email varchar(120) NOT NULL,\n  phone varchar(30) NOT NULL,\n  service varchar(120) NOT NULL,\n  appointment_date date NOT NULL,\n  appointment_time time NOT NULL,\n  context varchar(100) NOT NULL DEFAULT '',\n  status varchar(12) NOT NULL DEFAULT 'requested' CHECK (status IN ('requested', 'confirmed', 'cancelled')),\n  payment_method varchar(12) NOT NULL DEFAULT 'gcash' CHECK (payment_method IN ('gcash', 'maya')),\n  payment_status varchar(20) NOT NULL DEFAULT 'approved' CHECK (payment_status IN ('awaiting_proof', 'pending_review', 'approved', 'rejected', 'expired')),\n  payment_due_at timestamptz NOT NULL DEFAULT now(),\n  payment_reminder_sent_at timestamptz,\n  payment_owner_attention_at timestamptz,\n  payment_manual_received_at timestamptz,\n  created_at timestamptz NOT NULL DEFAULT now()\n)","-- Idempotent migration for existing appointment tables and their new account/slot relations.\nALTER TABLE tele_appointments ADD COLUMN IF NOT EXISTS client_account_id uuid","ALTER TABLE tele_appointments ADD COLUMN IF NOT EXISTS availability_slot_id uuid","ALTER TABLE tele_appointments ADD COLUMN IF NOT EXISTS payment_method varchar(12) NOT NULL DEFAULT 'gcash' CHECK (payment_method IN ('gcash', 'maya'))","ALTER TABLE tele_appointments ADD COLUMN IF NOT EXISTS payment_status varchar(20) NOT NULL DEFAULT 'approved' CHECK (payment_status IN ('awaiting_proof', 'pending_review', 'approved', 'rejected', 'expired'))","ALTER TABLE tele_appointments ADD COLUMN IF NOT EXISTS payment_due_at timestamptz NOT NULL DEFAULT now()","ALTER TABLE tele_appointments ADD COLUMN IF NOT EXISTS payment_reminder_sent_at timestamptz","ALTER TABLE tele_appointments ADD COLUMN IF NOT EXISTS payment_owner_attention_at timestamptz","ALTER TABLE tele_appointments ADD COLUMN IF NOT EXISTS payment_manual_received_at timestamptz","DO $$ BEGIN\n  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'tele_appointments'::regclass AND conname = 'tele_appointments_client_account_fk') THEN\n    ALTER TABLE tele_appointments ADD CONSTRAINT tele_appointments_client_account_fk FOREIGN KEY (client_account_id) REFERENCES tele_client_accounts(id) ON DELETE SET NULL;\n  END IF;\n  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'tele_appointments'::regclass AND conname = 'tele_appointments_availability_slot_fk') THEN\n    ALTER TABLE tele_appointments ADD CONSTRAINT tele_appointments_availability_slot_fk FOREIGN KEY (availability_slot_id) REFERENCES tele_consultation_slots(id) ON DELETE SET NULL;\n  END IF;\nEND $$","CREATE UNIQUE INDEX IF NOT EXISTS tele_appointments_slot_idx\n  ON tele_appointments(site_id, appointment_date, appointment_time)\n  WHERE status \u003c> 'cancelled'","CREATE UNIQUE INDEX IF NOT EXISTS tele_appointments_availability_slot_idx\n  ON tele_appointments(site_id, availability_slot_id)\n  WHERE availability_slot_id IS NOT NULL AND status \u003c> 'cancelled'","CREATE INDEX IF NOT EXISTS tele_appointments_client_idx ON tele_appointments(site_id, client_account_id, appointment_date, appointment_time)","CREATE INDEX IF NOT EXISTS tele_appointments_date_idx ON tele_appointments(site_id, appointment_date, status)","CREATE INDEX IF NOT EXISTS tele_appointments_payment_due_idx ON tele_appointments(site_id, payment_status, payment_due_at) WHERE status \u003c> 'cancelled'","DROP INDEX IF EXISTS appointments_slot_idx","DROP INDEX IF EXISTS appointments_availability_slot_idx","DROP INDEX IF EXISTS appointments_client_idx","DROP INDEX IF EXISTS appointments_date_idx","DROP INDEX IF EXISTS appointments_payment_due_idx","-- Private proof images are stored as bounded base64 in Neon, never in public assets.\n-- The owner-only API serves proof bytes after session authentication.\nCREATE TABLE IF NOT EXISTS tele_appointment_payment_proofs (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  site_id text NOT NULL REFERENCES tele_sites(site_id) ON DELETE CASCADE,\n  appointment_id uuid NOT NULL REFERENCES tele_appointments(id) ON DELETE CASCADE,\n  client_account_id uuid NOT NULL REFERENCES tele_client_accounts(id) ON DELETE CASCADE,\n  payment_method varchar(12) NOT NULL CHECK (payment_method IN ('gcash', 'maya')),\n  image_mime_type varchar(20) NOT NULL CHECK (image_mime_type IN ('image/jpeg', 'image/png', 'image/webp')),\n  image_base64 text NOT NULL CHECK (length(image_base64) BETWEEN 16 AND 4194304),\n  review_status varchar(20) NOT NULL DEFAULT 'pending_review' CHECK (review_status IN ('pending_review', 'approved', 'rejected')),\n  uploaded_at timestamptz NOT NULL DEFAULT now(),\n  reviewed_at timestamptz,\n  UNIQUE (site_id, appointment_id)\n)","CREATE INDEX IF NOT EXISTS tele_appointment_payment_proofs_status_idx ON tele_appointment_payment_proofs(site_id, review_status, uploaded_at DESC)","DROP INDEX IF EXISTS appointment_payment_proofs_status_idx","-- One optional private owner-to-client note per consultation. The client API only\n-- returns a note when the authenticated account owns that appointment.\nCREATE TABLE IF NOT EXISTS tele_consultation_notes (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  site_id text NOT NULL REFERENCES tele_sites(site_id) ON DELETE CASCADE,\n  appointment_id uuid NOT NULL REFERENCES tele_appointments(id) ON DELETE CASCADE,\n  client_account_id uuid NOT NULL REFERENCES tele_client_accounts(id) ON DELETE CASCADE,\n  note_body text NOT NULL CHECK (length(btrim(note_body)) > 0 AND length(note_body) \u003c= 12000),\n  created_at timestamptz NOT NULL DEFAULT now(),\n  updated_at timestamptz NOT NULL DEFAULT now(),\n  UNIQUE (site_id, appointment_id)\n)","CREATE INDEX IF NOT EXISTS tele_consultation_notes_client_idx ON tele_consultation_notes(site_id, client_account_id, updated_at DESC)","DROP INDEX IF EXISTS consultation_notes_client_idx"];
 const CSRF_COOKIE = 'practice_csrf';
 const CLIENT_SESSION_COOKIE = 'canopy_client';
 const CLIENT_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
@@ -44,7 +46,11 @@ function headersWithSecurity(source = {}) {
   return headers;
 }
 function json(data, status = 200, extra = {}) {
-  const headers = headersWithSecurity({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...extra });
+  const setCookie = extra['Set-Cookie'];
+  const rest = { ...extra };
+  delete rest['Set-Cookie'];
+  const headers = headersWithSecurity({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...rest });
+  for (const cookie of Array.isArray(setCookie) ? setCookie : setCookie ? [setCookie] : []) headers.append('Set-Cookie', cookie);
   return new Response(JSON.stringify(data), { status, headers });
 }
 function error(message, status = 400) { return json({ error: message }, status); }
@@ -57,8 +63,8 @@ function cleanTimeZone(value, fallback = 'Asia/Manila') {
 function cleanBannerImage(value) {
   const raw = cleanText(value, 2048);
   if (!raw) return '';
-  if (raw.startsWith('/') && !raw.startsWith('//')) return raw;
-  try { const url = new URL(raw); return url.protocol === 'https:' ? url.href : null; } catch (_) { return null; }
+  if (raw.startsWith('/') && !raw.startsWith('//') && !raw.startsWith('/\\') && !/[\u0000-\u0020]/.test(raw)) return raw;
+  try { const url = new URL(raw); return url.protocol === 'https:' && !url.username && !url.password ? url.href : null; } catch (_) { return null; }
 }
 function cleanCustomPageUrl(value) {
   let raw = cleanText(value, 120).replace(/^\/+|\/+$/g, '');
@@ -76,12 +82,14 @@ function cleanCustomPages(value, fallback = []) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
     const menuName = cleanText(item.menuName, 80);
     const pageTitle = cleanText(item.pageTitle, 120);
-    const pageContent = cleanText(item.pageContent, 6000);
+    const pageContent = String(item.pageContent ?? '').replace(/\r\n?/g, '\n').slice(0, 6000);
     const url = cleanCustomPageUrl(item.url);
     const imageUrl = cleanBannerImage(item.imageUrl);
-    if (!menuName || !pageTitle || !pageContent || !url || imageUrl === null || seen.has(url)) return [];
+    if (!menuName || !pageTitle || !url || imageUrl === null || seen.has(url)) return [];
+    let contentGallery;
+    try { contentGallery = normalizeContentGallery(item.contentGallery, pageContent); } catch (_) { return []; }
     seen.add(url);
-    return [{ id: cleanText(item.id, 48, url.slice(1, -5)), menuName, url, pageTitle, pageContent, imageUrl }];
+    return [{ id: cleanText(item.id, 48, url.slice(1, -5)), menuName, url, pageTitle, pageContent, imageUrl, contentGallery }];
   });
 }
 function cleanPaymentDetails(value) {
@@ -107,8 +115,9 @@ function cleanSiteConfig(input = {}) {
     fontStyle: merged.fontStyle === 'sans' ? 'sans' : 'serif',
     theme: normalizeSiteTheme(merged.theme, DEFAULT_CONFIG.theme),
     editorialAccent: ['black','teal','forest'].includes(merged.editorialAccent) ? merged.editorialAccent : 'black',
-    features: { ...DEFAULT_CONFIG.features, ...(merged.features || {}), gallery: merged.features?.gallery !== false },
+    features: { ...DEFAULT_CONFIG.features, ...(merged.features || {}), blog: true, gallery: merged.features?.gallery !== false },
     payments: cleanPaymentDetails(merged.payments),
+    pageEdits: normalizePageEdits(merged.pageEdits),
     customPages: cleanCustomPages(merged.customPages, DEFAULT_CONFIG.customPages),
     menuLinks: cleanMenuLinks(merged.menuLinks, DEFAULT_CONFIG.menuLinks)
   };
@@ -163,8 +172,8 @@ function slugify(value) { return String(value || '').toLowerCase().normalize('NF
 function cleanGalleryImage(value) {
   const raw = cleanText(value, 2048);
   if (!raw) return '';
-  if (raw.startsWith('/') && !raw.startsWith('//')) return raw;
-  try { const url = new URL(raw); return url.protocol === 'https:' ? url.href : null; } catch (_) { return null; }
+  if (raw.startsWith('/') && !raw.startsWith('//') && !raw.startsWith('/\\') && !/[\u0000-\u0020]/.test(raw)) return raw;
+  try { const url = new URL(raw); return url.protocol === 'https:' && !url.username && !url.password ? url.href : null; } catch (_) { return null; }
 }
 function galleryPayload(value = {}) {
   const imageUrl = cleanGalleryImage(value.imageUrl);
@@ -181,72 +190,43 @@ function validGalleryPayload(item) {
 function cleanArticleImage(value) {
   const raw = cleanText(value, 2048);
   if (!raw) return '';
-  if (raw.startsWith('/') && !raw.startsWith('//')) return raw;
-  try { const url = new URL(raw); return url.protocol === 'https:' ? url.href : null; } catch (_) { return null; }
+  if (raw.startsWith('/') && !raw.startsWith('//') && !raw.startsWith('/\\') && !/[\u0000-\u0020]/.test(raw)) return raw;
+  try { const url = new URL(raw); return url.protocol === 'https:' && !url.username && !url.password ? url.href : null; } catch (_) { return null; }
 }
 function articlePostPayload(value = {}) {
   const title = cleanText(value.title, 140);
-  const slug = slugify(value.slug || title);
+  const slug = slugify(cleanText(value.slug, 160) || title);
   const excerpt = cleanText(value.excerpt, 260);
-  const body = cleanText(value.body, 12000);
+  const body = String(value.body ?? '').replace(/\r\n?/g, '\n').slice(0, 12000);
   const category = cleanText(value.category, 60, 'Practice notes') || 'Practice notes';
   const status = value.status === 'published' ? 'published' : 'draft';
-  if (!Array.isArray(value.gallery ?? []) || (value.gallery || []).length > 12) return null;
-  const gallery = (value.gallery || []).map((image, index) => {
-    const imageUrl = cleanArticleImage(image?.imageUrl);
-    return { imageUrl, altText: cleanText(image?.altText, 180), caption: cleanText(image?.caption, 300), sortOrder: Number(image?.sortOrder ?? index) };
-  });
-  if (gallery.some((image) => !image.imageUrl || image.imageUrl === null || !image.altText || !Number.isInteger(image.sortOrder) || image.sortOrder < 0 || image.sortOrder > 11) || new Set(gallery.map((image) => image.sortOrder)).size !== gallery.length) return null;
-  gallery.sort((left, right) => left.sortOrder - right.sortOrder);
+  if (value.gallery != null && (!Array.isArray(value.gallery) || value.gallery.length)) return null;
+  let contentGallery;
+  try { contentGallery = normalizeContentGallery(value.contentGallery, body); } catch (_) { return null; }
   const suppliedFeatureUrl = cleanArticleImage(value.featureImageUrl);
   if (suppliedFeatureUrl === null) return null;
-  const featureImageUrl = suppliedFeatureUrl || gallery[0]?.imageUrl || '';
-  const featureImageAlt = cleanText(value.featureImageAlt, 180) || gallery.find((image) => image.imageUrl === featureImageUrl)?.altText || title;
-  if (!title || !body || !featureImageUrl || !featureImageAlt) return null;
-  return { title, slug, excerpt, body, category, status, featureImageUrl, featureImageAlt, gallery };
-}
-function articleGalleryRows(gallery) {
-  // jsonb_to_recordset below declares snake_case columns, while the owner
-  // dashboard posts camelCase gallery rows ({ imageUrl, altText, caption,
-  // sortOrder }). Passing the objects through unchanged inserted NULLs and the
-  // save failed with "null value in column \"image_url\"" whenever an article
-  // carried a gallery image, so map the fields explicitly.
-  return JSON.stringify((Array.isArray(gallery) ? gallery : []).map((image) => ({
-    image_url: image?.imageUrl ?? '',
-    alt_text: image?.altText ?? '',
-    caption: image?.caption ?? '',
-    sort_order: Number(image?.sortOrder ?? 0)
-  })));
+  const featureImageUrl = suppliedFeatureUrl;
+  const featureImageAlt = cleanText(value.featureImageAlt, 180) || (featureImageUrl ? title : '');
+  if (!title || !body.trim()) return null;
+  return { title, slug, excerpt, body, category, status, featureImageUrl, featureImageAlt, contentGallery };
 }
 async function persistArticle(sql, post, id = '') {
   if (id) return sql`
     WITH saved AS (
-      UPDATE tele_blog_posts SET title = ${post.title}, slug = ${post.slug}, excerpt = ${post.excerpt}, body = ${post.body}, feature_image_url = ${post.featureImageUrl}, feature_image_alt = ${post.featureImageAlt}, category = ${post.category}, status = ${post.status}, published_at = CASE WHEN ${post.status} = 'published' THEN COALESCE(published_at, now()) ELSE NULL END, updated_at = now()
+      UPDATE tele_blog_posts SET title = ${post.title}, slug = ${post.slug}, excerpt = ${post.excerpt}, body = ${post.body}, feature_image_url = ${post.featureImageUrl}, feature_image_alt = ${post.featureImageAlt}, category = ${post.category}, content_gallery = ${JSON.stringify(post.contentGallery)}::jsonb, status = ${post.status}, published_at = CASE WHEN ${post.status} = 'published' THEN COALESCE(published_at, now()) ELSE NULL END, updated_at = now()
       WHERE site_id = ${SITE_ID} AND id = ${id}::uuid
-      RETURNING id, site_id, title, slug, excerpt, body, feature_image_url AS "featureImageUrl", feature_image_alt AS "featureImageAlt", category, status, published_at AS "publishedAt", created_at AS "createdAt"
+      RETURNING id, site_id, title, slug, excerpt, body, feature_image_url AS "featureImageUrl", feature_image_alt AS "featureImageAlt", category, content_gallery AS "contentGallery", status, published_at AS "publishedAt", created_at AS "createdAt"
     ), cleared AS (
       DELETE FROM tele_blog_post_images AS image USING saved WHERE image.site_id = saved.site_id AND image.post_id = saved.id RETURNING image.id
-    ), added AS (
-      INSERT INTO tele_blog_post_images (site_id, post_id, image_url, alt_text, caption, sort_order)
-      SELECT saved.site_id, saved.id, incoming.image_url, incoming.alt_text, incoming.caption, incoming.sort_order
-      FROM saved CROSS JOIN (SELECT count(*) AS cleared_count FROM cleared) AS cleared_images
-      CROSS JOIN jsonb_to_recordset(${articleGalleryRows(post.gallery)}::jsonb) AS incoming(image_url text, alt_text text, caption text, sort_order integer)
-      RETURNING id
     )
     SELECT saved.* FROM saved`;
   return sql`
     WITH saved AS (
-      INSERT INTO tele_blog_posts (site_id, title, slug, excerpt, body, feature_image_url, feature_image_alt, category, status, published_at)
-      VALUES (${SITE_ID}, ${post.title}, ${post.slug}, ${post.excerpt}, ${post.body}, ${post.featureImageUrl}, ${post.featureImageAlt}, ${post.category}, ${post.status}, CASE WHEN ${post.status} = 'published' THEN now() ELSE NULL END)
-      RETURNING id, site_id, title, slug, excerpt, body, feature_image_url AS "featureImageUrl", feature_image_alt AS "featureImageAlt", category, status, published_at AS "publishedAt", created_at AS "createdAt"
+      INSERT INTO tele_blog_posts (site_id, title, slug, excerpt, body, feature_image_url, feature_image_alt, category, content_gallery, status, published_at)
+      VALUES (${SITE_ID}, ${post.title}, ${post.slug}, ${post.excerpt}, ${post.body}, ${post.featureImageUrl}, ${post.featureImageAlt}, ${post.category}, ${JSON.stringify(post.contentGallery)}::jsonb, ${post.status}, CASE WHEN ${post.status} = 'published' THEN now() ELSE NULL END)
+      RETURNING id, site_id, title, slug, excerpt, body, feature_image_url AS "featureImageUrl", feature_image_alt AS "featureImageAlt", category, content_gallery AS "contentGallery", status, published_at AS "publishedAt", created_at AS "createdAt"
     ), cleared AS (
       DELETE FROM tele_blog_post_images AS image USING saved WHERE image.site_id = saved.site_id AND image.post_id = saved.id RETURNING image.id
-    ), added AS (
-      INSERT INTO tele_blog_post_images (site_id, post_id, image_url, alt_text, caption, sort_order)
-      SELECT saved.site_id, saved.id, incoming.image_url, incoming.alt_text, incoming.caption, incoming.sort_order
-      FROM saved CROSS JOIN (SELECT count(*) AS cleared_count FROM cleared) AS cleared_images
-      CROSS JOIN jsonb_to_recordset(${articleGalleryRows(post.gallery)}::jsonb) AS incoming(image_url text, alt_text text, caption text, sort_order integer)
-      RETURNING id
     )
     SELECT saved.* FROM saved`;
 }
@@ -288,15 +268,20 @@ function ensureSiteRow(env) {
     const client = rawSql(env);
     siteRowReady = (async () => {
       await ensureSchema(env);
-      await client`INSERT INTO tele_sites (site_id, config) VALUES (${SITE_ID}, ${JSON.stringify(DEFAULT_CONFIG)}::jsonb) ON CONFLICT (site_id) DO NOTHING`;
+      // Bug Fix No. 204: refresh the compiled package theme (and the rest of
+      // DEFAULT_CONFIG) onto an untouched seed row. `updated_at = created_at`
+      // is the same predicate the owner-account seed uses: an owner save of
+      // appearance/identity stamps updated_at and is never overwritten, so a
+      // rebuilt Brivon Light ZIP deployed onto a database that still holds the
+      // first Brivon Dark seed actually becomes light.
+      await client`INSERT INTO tele_sites (site_id, config) VALUES (${SITE_ID}, ${JSON.stringify(DEFAULT_CONFIG)}::jsonb) ON CONFLICT (site_id) DO UPDATE SET config = EXCLUDED.config WHERE tele_sites.updated_at = tele_sites.created_at`;
     })().catch((cause) => { siteRowReady = null; throw cause; });
   }
   return siteRowReady;
 }
-// The owner account lives in tele_admin_users. The ADMIN_* Worker secrets seed
-// that row on first use; after that the database copy is authoritative, so the
-// owner can change the username, email or password in the dashboard without
-// touching Worker secrets.
+// The owner account lives in tele_admin_users, in the same Neon database as
+// client registration. The ADMIN_* Worker values seed that row on the first
+// live request after deploy; after that the database copy is authoritative.
 //
 // A redeploy refreshes the row only while it is still the untouched seed, which
 // is what `updated_at = created_at` identifies: the dashboard's account panel
@@ -311,8 +296,11 @@ function ensureAdminUser(env) {
     const client = rawSql(env);
     adminUserReady = (async () => {
       await ensureSiteRow(env);
-      if (!env.ADMIN_USERNAME || !env.ADMIN_EMAIL || !env.ADMIN_PASSWORD_HASH) return;
-      await client`INSERT INTO tele_admin_users (site_id, username, email, password_hash) VALUES (${SITE_ID}, ${String(env.ADMIN_USERNAME).trim()}, ${String(env.ADMIN_EMAIL).trim()}, ${String(env.ADMIN_PASSWORD_HASH)}) ON CONFLICT (site_id) DO UPDATE SET username = EXCLUDED.username, email = EXCLUDED.email, password_hash = EXCLUDED.password_hash WHERE tele_admin_users.updated_at = tele_admin_users.created_at`;
+      const username = String(env.ADMIN_USERNAME || '').trim();
+      const email = String(env.ADMIN_EMAIL || '').trim();
+      const passwordHash = normalizePasswordHash(env.ADMIN_PASSWORD_HASH);
+      if (!username || !email || !passwordHash) return;
+      await client`INSERT INTO tele_admin_users (site_id, username, email, password_hash) VALUES (${SITE_ID}, ${username}, ${email}, ${passwordHash}) ON CONFLICT (site_id) DO UPDATE SET username = EXCLUDED.username, email = EXCLUDED.email, password_hash = EXCLUDED.password_hash WHERE tele_admin_users.updated_at = tele_admin_users.created_at`;
     })().catch((cause) => { adminUserReady = null; debugError(env, 'owner account seed failed', cause); throw cause; });
   }
   return adminUserReady;
@@ -323,6 +311,7 @@ function sql(env) {
   const client = rawSql(env);
   return async (strings, ...values) => {
     await ensureSiteRow(env);
+    await ensureAdminUser(env);
     return client(strings, ...values);
   };
 }
@@ -352,13 +341,16 @@ async function csrfSecret(env) {
   return derivedCsrfSecret;
 }
 async function issueCsrf(request, env) {
+  if (env.DATABASE_URL) {
+    try { await ensureAdminUser(env); } catch (cause) { debugError(env, 'first-url owner seed failed', cause); }
+  }
   const secret = await csrfSecret(env);
   if (!secret) return error('Set a CSRF_SECRET Worker secret (or DATABASE_URL) before using forms.', 503);
   const nonceBytes = crypto.getRandomValues(new Uint8Array(24));
   const nonce = base64url(nonceBytes);
   const signature = base64url(await hmac(nonce, secret));
   const token = `${nonce}.${signature}`;
-  const secure = new URL(request.url).protocol === 'https:' ? '; Secure' : '';
+  const secure = requestIsHttps(request) ? '; Secure' : '';
   // Wrangler local may use http; production is always served over HTTPS.
   return json({ token }, 200, { 'Set-Cookie': `${CSRF_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=3600${secure}` });
 }
@@ -427,10 +419,33 @@ function constantEqual(left, right) {
   for (let i = 0; i < max; i++) diff |= (a[i % (a.length || 1)] || 0) ^ (b[i % (b.length || 1)] || 0);
   return diff === 0;
 }
-async function csrfOk(request, env) {
-  const url = new URL(request.url);
+function hostnamesMatch(left, right) {
+  const a = String(left || '').toLowerCase();
+  const b = String(right || '').toLowerCase();
+  if (!a || !b) return false;
+  if (a === b) return true;
+  return a.split(':')[0] === b.split(':')[0];
+}
+function requestIsHttps(request) {
+  try { if (new URL(request.url).protocol === 'https:') return true; } catch (_) { /* ignore */ }
+  const forwarded = String(request.headers.get('X-Forwarded-Proto') || '').split(',')[0].trim().toLowerCase();
+  if (forwarded === 'https') return true;
+  return /"scheme"\s*:\s*"https"/i.test(String(request.headers.get('CF-Visitor') || ''));
+}
+function requestOriginAllowed(request) {
   const origin = request.headers.get('Origin');
-  if (origin && origin !== url.origin) return false;
+  if (!origin) return true;
+  let parsed;
+  try { parsed = new URL(origin); } catch (_) { return false; }
+  const url = new URL(request.url);
+  if (parsed.origin === url.origin || hostnamesMatch(parsed.host, url.host)) return true;
+  for (const entry of String(request.headers.get('X-Forwarded-Host') || '').split(',')) {
+    if (hostnamesMatch(parsed.host, entry.trim())) return true;
+  }
+  return false;
+}
+async function csrfOk(request, env) {
+  if (!requestOriginAllowed(request)) return false;
   const cookie = readCookie(request.headers.get('Cookie'), CSRF_COOKIE);
   const header = request.headers.get('X-CSRF-Token');
   if (!cookie || !header || !constantEqual(cookie, header)) return false;
@@ -444,11 +459,10 @@ async function csrfOk(request, env) {
 }
 // PASSWORD_MIN / PASSWORD_MAX are imported from lib/admin-security.js so this
 // file, the Vercel runtime and verifyPasswordHash() all read the same two
-// numbers. Password length is 8–25 for every sign-in form in this app: the
-// owner sign-in, the owner's "change password" panel, the public client
-// sign-up, and the client sign-in. The owner policy still demands one lowercase
-// letter, one uppercase letter, one number and one symbol; the client policy
-// only enforces length.
+// numbers. Password length is 8–25 for every user type: the owner sign-in, the
+// owner's "change password" panel, public client sign-up, and client sign-in.
+// Creation (owner and client) also requires one lowercase, one uppercase, one
+// number and one symbol. Verification checks length only.
 function ownerPasswordProblem(value) {
   if (value.length < PASSWORD_MIN || value.length > PASSWORD_MAX) return `The password must be ${PASSWORD_MIN}–${PASSWORD_MAX} characters long.`;
   if (!/[a-z]/.test(value) || !/[A-Z]/.test(value) || !/[0-9]/.test(value) || !/[^A-Za-z0-9\s]/.test(value)) {
@@ -477,29 +491,43 @@ function registerProblem(name, email, phone, password) {
 async function adminCredentials(env) {
   const fromSecrets = {
     username: cleanText(env.ADMIN_USERNAME, 64), email: cleanText(env.ADMIN_EMAIL, 254),
-    passwordHash: String(env.ADMIN_PASSWORD_HASH || ''), source: 'worker-secrets'
+    passwordHash: normalizePasswordHash(env.ADMIN_PASSWORD_HASH), source: 'worker-secrets'
   };
   const secretsComplete = Boolean(fromSecrets.username && fromSecrets.email && fromSecrets.passwordHash);
   if (!env.DATABASE_URL) return secretsComplete ? fromSecrets : null;
   try {
     await ensureAdminUser(env);
     const rows = await sql(env)`SELECT username, email, password_hash AS "passwordHash" FROM tele_admin_users WHERE site_id = ${SITE_ID} LIMIT 1`;
-    if (rows[0]) return { username: String(rows[0].username), email: String(rows[0].email), passwordHash: String(rows[0].passwordHash), source: 'database' };
+    if (rows[0]) {
+      const fromDatabase = {
+        username: String(rows[0].username), email: String(rows[0].email),
+        passwordHash: normalizePasswordHash(rows[0].passwordHash), source: 'database'
+      };
+      if (passwordHashWellFormed(fromDatabase.passwordHash)) return fromDatabase;
+      if (secretsComplete && passwordHashWellFormed(fromSecrets.passwordHash)) {
+        return { ...fromDatabase, passwordHash: fromSecrets.passwordHash, source: 'worker-secrets' };
+      }
+      return fromDatabase;
+    }
   } catch (cause) { debugError(env, 'owner account read failed', cause); }
   return secretsComplete ? fromSecrets : null;
 }
 async function adminConfigured(env) {
   return Boolean(await adminCredentials(env));
 }
-function adminSessionCookieName(request) {
-  return new URL(request.url).protocol === 'https:' ? '__Host-canopy_owner' : 'canopy_owner';
+function ownerSessionToken(request) {
+  // Bug Fix No. 204: protocol detection can disagree between the login POST
+  // and later GETs (proxy TLS termination). Read both cookie names so a
+  // successful sign-in is not immediately forgotten.
+  const header = request.headers.get('Cookie');
+  return readCookie(header, '__Host-canopy_owner') || readCookie(header, 'canopy_owner');
 }
 async function adminOk(request, env) {
   const credentials = await adminCredentials(env);
   if (!credentials) return false;
   const secret = await csrfSecret(env);
   if (!secret) return false;
-  const token = readCookie(request.headers.get('Cookie'), adminSessionCookieName(request));
+  const token = ownerSessionToken(request);
   return verifyAdminSession(token, credentials.username, credentials.passwordHash, secret);
 }
 async function adminFailure(env) {
@@ -507,9 +535,12 @@ async function adminFailure(env) {
     ? error('Owner session is not valid. Sign in again.', 401)
     : error('Owner sign-in is not configured. Set ADMIN_USERNAME, ADMIN_EMAIL and ADMIN_PASSWORD_HASH on the Worker (the database copy is used once it exists).', 503);
 }
-function ownerSessionCookie(request, token) {
-  const secure = new URL(request.url).protocol === 'https:' ? '; Secure' : '';
-  return `${adminSessionCookieName(request)}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200${secure}`;
+function ownerSessionCookies(request, token, maxAge = 43200) {
+  const encoded = encodeURIComponent(token);
+  const secure = requestIsHttps(request);
+  const cookies = [`canopy_owner=${encoded}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${secure ? '; Secure' : ''}`];
+  if (secure) cookies.unshift(`__Host-canopy_owner=${encoded}; Path=/; HttpOnly; SameSite=Strict; Secure; Max-Age=${maxAge}`);
+  return cookies;
 }
 async function readJson(request) {
   const contentLength = Number(request.headers.get('Content-Length') || 0);
@@ -592,9 +623,10 @@ async function routeApi(request, env) {
     const usernameMatches = constantEqual(entered, credentials.username.toLowerCase())
       || (Boolean(credentials.email) && constantEqual(entered, credentials.email.toLowerCase()));
     const passwordMatches = await verifyPasswordHash(password, credentials.passwordHash);
-    if (!usernameMatches || !passwordMatches) return error('Username or password is incorrect.', 401);
+    const loginError = ownerLoginError(usernameMatches, passwordMatches);
+    if (loginError) return error(loginError, 401);
     const token = await createAdminSession(credentials.username, credentials.passwordHash, await csrfSecret(env));
-    return json({ ok: true, email: credentials.email, dashboardPath: adminDashboardPath(new Date(), SITE_TIME_ZONE) }, 200, { 'Set-Cookie': ownerSessionCookie(request, token) });
+    return json({ ok: true, authenticated: true, username: credentials.username, email: credentials.email, dashboardPath: adminDashboardPath(new Date(), SITE_TIME_ZONE) }, 200, { 'Set-Cookie': ownerSessionCookies(request, token) });
   }
   if (path === '/api/admin/account' && method === 'PUT') {
     if (!await csrfOk(request, env)) return error('Cross-site request rejected or security token expired.', 403);
@@ -618,20 +650,18 @@ async function routeApi(request, env) {
       await sql(env)`INSERT INTO tele_admin_users (site_id, username, email, password_hash) VALUES (${SITE_ID}, ${username}, ${email}, ${passwordHash}) ON CONFLICT (site_id) DO UPDATE SET username = EXCLUDED.username, email = EXCLUDED.email, password_hash = EXCLUDED.password_hash, updated_at = now()`;
     } catch (cause) { console.error('owner account save failed', cause); return error(databaseErrorMessage(cause, 'Could not save the owner sign-in details.'), 503); }
     const token = await createAdminSession(username, passwordHash, await csrfSecret(env));
-    return json({ ok: true, username, email }, 200, { 'Set-Cookie': ownerSessionCookie(request, token) });
+    return json({ ok: true, username, email }, 200, { 'Set-Cookie': ownerSessionCookies(request, token) });
   }
   if (path === '/api/admin/logout' && method === 'POST') {
     if (!await csrfOk(request, env)) return error('Cross-site request rejected or security token expired.', 403);
-    const secure = new URL(request.url).protocol === 'https:' ? '; Secure' : '';
-    const cookie = `${adminSessionCookieName(request)}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}`;
-    return json({ ok: true }, 200, { 'Set-Cookie': cookie });
+    return json({ ok: true }, 200, { 'Set-Cookie': ownerSessionCookies(request, '', 0) });
   }
   if (path === '/api/site' && method === 'GET') return json(await siteConfig(env));
   if (path === '/api/site' && method === 'PUT') {
     if (!await csrfOk(request, env)) return error('Cross-site request rejected or security token expired.', 403);
     if (!await adminOk(request, env)) return adminFailure(env);
     const body = await readJson(request); if (!body) return error('Send a valid JSON object.');
-    const config = cleanSiteConfig(body);
+    let config; try { config = cleanSiteConfig(body); } catch (cause) { return error(cause.message, 400); }
     if (!config.businessName || (config.email && !/^\S+@\S+\.\S+$/.test(config.email))) return error('Check the practice name and contact email.');
     try {
       const rows = await sql(env)`INSERT INTO tele_sites (site_id, config) VALUES (${SITE_ID}, ${JSON.stringify(config)}::jsonb) ON CONFLICT (site_id) DO UPDATE SET config = EXCLUDED.config, updated_at = now() RETURNING config`;
@@ -701,7 +731,7 @@ async function routeApi(request, env) {
       return post ? json({ post }) : error('Article not found.', 404);
     }
     try {
-      const rows = await sql(env)`SELECT post.id, post.title, post.slug, post.excerpt, post.body, post.category, post.feature_image_url AS "featureImageUrl", post.feature_image_alt AS "featureImageAlt", post.published_at AS "publishedAt", post.created_at AS "createdAt", COALESCE((SELECT json_agg(json_build_object('id', image.id, 'imageUrl', image.image_url, 'altText', image.alt_text, 'caption', image.caption, 'sortOrder', image.sort_order) ORDER BY image.sort_order) FROM tele_blog_post_images AS image WHERE image.site_id = post.site_id AND image.post_id = post.id), '[]'::json) AS gallery FROM tele_blog_posts AS post WHERE post.site_id = ${SITE_ID} AND post.status = 'published' AND post.slug = ${slug} LIMIT 1`;
+      const rows = await sql(env)`SELECT post.id, post.title, post.slug, post.excerpt, post.body, post.category, post.feature_image_url AS "featureImageUrl", post.feature_image_alt AS "featureImageAlt", post.published_at AS "publishedAt", post.created_at AS "createdAt", post.content_gallery AS "contentGallery" FROM tele_blog_posts AS post WHERE post.site_id = ${SITE_ID} AND post.status = 'published' AND post.slug = ${slug} LIMIT 1`;
       return rows.length ? json({ post: rows[0] }) : error('Article not found.', 404);
     } catch (cause) { console.error('blog article read failed', cause); return error('Could not load this article.', 503); }
   }
@@ -1009,8 +1039,9 @@ async function routeApi(request, env) {
   if (path === '/api/admin/posts' && method === 'GET') {
     if (!await adminOk(request, env)) return adminFailure(env);
     if (!DEFAULT_CONFIG.features?.blog) return error('Blog is not enabled for this site.', 404);
+    if (!env.DATABASE_URL) return error('Connect the appointment database (DATABASE_URL) to save posts.', 503);
     try {
-      const posts = await sql(env)`SELECT post.id, post.title, post.slug, post.excerpt, post.body, post.category, post.feature_image_url AS "featureImageUrl", post.feature_image_alt AS "featureImageAlt", post.status, post.published_at AS "publishedAt", post.created_at AS "createdAt", COALESCE((SELECT json_agg(json_build_object('id', image.id, 'imageUrl', image.image_url, 'altText', image.alt_text, 'caption', image.caption, 'sortOrder', image.sort_order) ORDER BY image.sort_order) FROM tele_blog_post_images AS image WHERE image.site_id = post.site_id AND image.post_id = post.id), '[]'::json) AS gallery FROM tele_blog_posts AS post WHERE post.site_id = ${SITE_ID} ORDER BY post.created_at DESC LIMIT 100`;
+      const posts = await sql(env)`SELECT post.id, post.title, post.slug, post.excerpt, post.body, post.category, post.feature_image_url AS "featureImageUrl", post.feature_image_alt AS "featureImageAlt", post.status, post.published_at AS "publishedAt", post.created_at AS "createdAt", post.content_gallery AS "contentGallery" FROM tele_blog_posts AS post WHERE post.site_id = ${SITE_ID} ORDER BY post.created_at DESC LIMIT 100`;
       return json({ posts });
     } catch (cause) { console.error('admin blog read failed', cause); return error('Could not load blog posts. Check the Neon schema.', 503); }
   }
@@ -1018,28 +1049,30 @@ async function routeApi(request, env) {
     if (!await csrfOk(request, env)) return error('Cross-site request rejected or security token expired.', 403);
     if (!await adminOk(request, env)) return adminFailure(env);
     if (!DEFAULT_CONFIG.features?.blog) return error('Blog is not enabled for this site.', 404);
+    if (!env.DATABASE_URL) return error('Connect the appointment database (DATABASE_URL) to save posts.', 503);
     const value = await readJson(request); if (!value) return error('Send a valid JSON object.');
     const post = articlePostPayload(value);
-    if (!post) return error('Add a title and article body, plus a valid feature image. If you leave the feature image blank, add a gallery image with a URL and alt text.');
+    if (!post) return error('Add a title and article body. Use a gallery title and valid unique image URLs, with at most two images per paragraph.');
     try {
       const posts = await persistArticle(sql(env), post);
       return json({ post: posts[0] }, 201);
-    } catch (cause) { console.error('blog post save failed', cause); return error(cause.code === '23505' ? 'That URL slug is already in use or gallery order is duplicated.' : databaseErrorMessage(cause, 'Could not save the post.'), cause.code === '23505' ? 409 : 503); }
+    } catch (cause) { console.error('blog post save failed', cause); return error(cause.code === '23505' ? 'That blog URL is already in use. Choose a different slug.' : databaseErrorMessage(cause, 'Could not save the post.'), cause.code === '23505' ? 409 : 503); }
   }
   if (path.startsWith('/api/admin/posts/') && method === 'PUT') {
     if (!await csrfOk(request, env)) return error('Cross-site request rejected or security token expired.', 403);
     if (!await adminOk(request, env)) return adminFailure(env);
     if (!DEFAULT_CONFIG.features?.blog) return error('Blog is not enabled for this site.', 404);
+    if (!env.DATABASE_URL) return error('Connect the appointment database (DATABASE_URL) to save posts.', 503);
     const id = path.slice('/api/admin/posts/'.length);
     const value = await readJson(request); if (!value) return error('Send a valid JSON object.');
     if (!/^[0-9a-f-]{36}$/i.test(id)) return error('Invalid post id.');
     const post = articlePostPayload(value);
-    if (!post) return error('Add a title and article body, plus a valid feature image. If you leave the feature image blank, add a gallery image with a URL and alt text.');
+    if (!post) return error('Add a title and article body. Use a gallery title and valid unique image URLs, with at most two images per paragraph.');
     try {
       const posts = await persistArticle(sql(env), post, id);
       return posts.length ? json({ post: posts[0] }) : error('That post was not found.', 404);
     } catch (cause) {
-      if (cause.code === '23505') return error('That URL slug is already in use or gallery order is duplicated.', 409);
+      if (cause.code === '23505') return error('That blog URL is already in use. Choose a different slug.', 409);
       console.error('blog post update failed', cause); return error(databaseErrorMessage(cause, 'Could not update the post.'), 503);
     }
   }
@@ -1047,6 +1080,7 @@ async function routeApi(request, env) {
     if (!await csrfOk(request, env)) return error('Cross-site request rejected or security token expired.', 403);
     if (!await adminOk(request, env)) return adminFailure(env);
     if (!DEFAULT_CONFIG.features?.blog) return error('Blog is not enabled for this site.', 404);
+    if (!env.DATABASE_URL) return error('Connect the appointment database (DATABASE_URL) to save posts.', 503);
     const id = path.slice('/api/admin/posts/'.length);
     if (!/^[0-9a-f-]{36}$/i.test(id)) return error('Invalid post id.');
     try {
@@ -1098,18 +1132,33 @@ async function routeApi(request, env) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    if (env.DATABASE_URL && (request.method === 'GET' || request.method === 'HEAD')
+      && (url.pathname === '/' || url.pathname.endsWith('.html') || isAdminDashboardPath(url.pathname))) {
+      ctx?.waitUntil?.(ensureAdminUser(env).catch((cause) => debugError(env, 'first-url owner seed failed', cause)));
+    }
     if (url.pathname.startsWith('/api/')) {
       try { return await routeApi(request, env); }
       catch (cause) { console.error('unhandled Worker API error', cause); return error('Something went wrong. Please try again.', 500); }
     }
     if (request.method !== 'GET' && request.method !== 'HEAD') return error('Method not allowed.', 405);
     if (url.pathname === '/admin.html') return error('Not found.', 404);
+    if (url.pathname.startsWith('/blog/')) {
+      const match = /^\/blog\/([a-z0-9-]{1,160})\/?$/i.exec(url.pathname);
+      if (!match) return error('Article not found.', 404);
+      const articleUrl = new URL(`/api/posts/${match[1]}`, url);
+      const article = await routeApi(new Request(articleUrl), env).catch(() => error('Could not load this article.', 503));
+      if (!article.ok) return request.method === 'HEAD' ? new Response(null, { status: article.status, headers: article.headers }) : article;
+      const response = await env.ASSETS.fetch(new Request(new URL('/index.html', url), { method: request.method }));
+      const headers = headersWithSecurity(response.headers);
+      headers.set('Cache-Control', 'no-store');
+      return new Response(request.method === 'HEAD' ? null : response.body, { status: response.status, headers });
+    }
+
     if (isAdminDashboardPath(url.pathname)) {
       const expectedPath = adminDashboardPath(new Date(), SITE_TIME_ZONE);
-      if (url.pathname !== expectedPath) {
-        if (!await adminOk(request, env)) return error('Not found.', 404);
+      if (url.pathname !== expectedPath && await adminOk(request, env)) {
         const headers = headersWithSecurity({ Location: expectedPath, 'Cache-Control': 'no-store' });
         return new Response(null, { status: 302, headers });
       }
