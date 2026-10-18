@@ -25,10 +25,73 @@ END $$;
 
 CREATE TABLE IF NOT EXISTS tele_sites (
   site_id text PRIMARY KEY,
+  -- Bug Fix Session #224: the practice contact email is a first-class column,
+  -- not only a string inside `config`. It is the one business-unique key on
+  -- this table: one contact email may own only one site row. `site_id` stays
+  -- the primary key because every other `tele_` table references it by
+  -- foreign key; the email column is the uniqueness rule the operator asked
+  -- for. It is nullable only so legacy rows that never stored an email can be
+  -- migrated without inventing one.
+  email varchar(120),
   config jsonb NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Bug Fix Session #224 — migrate existing databases in place.
+-- 1. Add the column when `tele_sites` was created by an older package.
+ALTER TABLE tele_sites ADD COLUMN IF NOT EXISTS email varchar(120);
+-- 2-4. Backfill, cleanup and duplicate resolution. Once the unique index exists
+--      this block is skipped: running the backfill again would try to restore a
+--      duplicate email that step 4 deliberately cleared, and the already-present
+--      index would reject the whole bootstrap transaction.
+DO $$ BEGIN
+  IF to_regclass('public.tele_sites_email_unique_idx') IS NULL THEN
+    -- Backfill from the contact email stored inside `config`. Lower-casing is
+    -- deliberate: email uniqueness is case-insensitive, and the column holds
+    -- the canonical value used by the unique index below.
+    UPDATE tele_sites
+    SET email = left(NULLIF(lower(btrim(config ->> 'email')), ''), 120)
+    WHERE email IS DISTINCT FROM left(NULLIF(lower(btrim(config ->> 'email')), ''), 120);
+    -- Never let a legacy malformed value block the unique index. The generated
+    -- runtimes validate the address before writing; this only cleans old rows.
+    UPDATE tele_sites
+    SET email = NULL
+    WHERE email IS NOT NULL
+      AND email !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$';
+    -- Existing databases may already contain duplicate contact emails. Keep the
+    -- oldest row (then the lowest site_id as a deterministic tie-break) and
+    -- leave the later duplicates without a column value. Their `config.email`
+    -- is untouched, so no owner data is lost; the uniqueness rule simply cannot
+    -- represent two live sites with the same contact email.
+    UPDATE tele_sites AS duplicate
+    SET email = NULL
+    FROM tele_sites AS keeper
+    WHERE duplicate.email IS NOT NULL
+      AND keeper.email = duplicate.email
+      AND (keeper.created_at, keeper.site_id) < (duplicate.created_at, duplicate.site_id);
+  END IF;
+END $$;
+-- 5. Keep the column synchronized for every writer, including packages built
+--    before this column existed. Those packages still write only `config`, so
+--    a trigger derives the canonical email on insert and whenever `config`
+--    changes. Current packages also write the column explicitly; the trigger
+--    is the schema-level guarantee that the two can never drift apart.
+CREATE OR REPLACE FUNCTION tele_sites_sync_email() RETURNS trigger AS $$
+BEGIN
+  NEW.email := left(NULLIF(lower(btrim(NEW.config ->> 'email')), ''), 120);
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS tele_sites_sync_email ON tele_sites;
+CREATE TRIGGER tele_sites_sync_email
+  BEFORE INSERT OR UPDATE OF config ON tele_sites
+  FOR EACH ROW EXECUTE FUNCTION tele_sites_sync_email();
+-- 6. The unique rule itself. The partial predicate permits multiple legacy
+--    rows with no email while rejecting every repeated non-null contact email.
+CREATE UNIQUE INDEX IF NOT EXISTS tele_sites_email_unique_idx
+  ON tele_sites (lower(email))
+  WHERE email IS NOT NULL;
 
 -- Owner sign-in accounts. The owner username, email and salted PBKDF2 password
 -- hash live here, in the same Neon database as tele_client_accounts. The
@@ -44,6 +107,86 @@ CREATE TABLE IF NOT EXISTS tele_admin_users (
   updated_at timestamptz NOT NULL DEFAULT now(),
   CHECK (username ~ '^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$')
 );
+
+-- Bug Fix Session #229 — repair owner credentials written by older builds.
+-- `CREATE TABLE IF NOT EXISTS` does nothing when the table already exists, so an
+-- existing database kept whatever shape its first build created: a missing
+-- timestamp column, or `password_hash` as a JSON column because the account was
+-- stored as a JSON document. The generated runtime seeds and reads this row on
+-- every database-backed request, so one incompatible column made the owner seed
+-- throw and took every query down with it — client registration included
+-- ("Could not create the client account"). Normalize the table in place; every
+-- statement below is idempotent and safe to rerun.
+ALTER TABLE tele_admin_users ADD COLUMN IF NOT EXISTS username varchar(64);
+ALTER TABLE tele_admin_users ADD COLUMN IF NOT EXISTS email varchar(254);
+ALTER TABLE tele_admin_users ADD COLUMN IF NOT EXISTS password_hash text;
+ALTER TABLE tele_admin_users ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+ALTER TABLE tele_admin_users ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+-- A JSON-typed credential column becomes plain text. A JSON string keeps its
+-- inner hash; a JSON document keeps its text so the unwrap below can pull the
+-- hash out of `passwordHash`/`password_hash`/`hash`/`password`.
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'tele_admin_users'
+      AND column_name = 'password_hash' AND data_type IN ('jsonb', 'json')
+  ) THEN
+    ALTER TABLE tele_admin_users ALTER COLUMN password_hash DROP DEFAULT;
+    ALTER TABLE tele_admin_users ALTER COLUMN password_hash TYPE text USING (
+      CASE WHEN jsonb_typeof(password_hash::jsonb) = 'string'
+        THEN password_hash::jsonb #>> '{}'
+        ELSE password_hash::jsonb::text END
+    );
+  END IF;
+END $$;
+-- Any other legacy type (for example varchar) also becomes text.
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'tele_admin_users'
+      AND column_name = 'password_hash'
+      AND data_type NOT IN ('text', 'character varying', 'jsonb', 'json')
+  ) THEN
+    ALTER TABLE tele_admin_users ALTER COLUMN password_hash TYPE text USING password_hash::text;
+  END IF;
+END $$;
+-- A build that kept the owner account inside the site configuration document
+-- (`tele_sites.config`) is imported into the dedicated row, so sign-in reads a
+-- text column instead of reaching into JSON. The stored value is normalized by
+-- the UPDATE below.
+INSERT INTO tele_admin_users (site_id, username, email, password_hash)
+SELECT site.site_id,
+       COALESCE(NULLIF(site.config #>> '{admin,username}', ''), NULLIF(site.config #>> '{owner,username}', ''), 'owner'),
+       COALESCE(NULLIF(site.config #>> '{admin,email}', ''), NULLIF(site.config #>> '{owner,email}', ''), NULLIF(site.config #>> '{email}', ''), 'owner@example.invalid'),
+       COALESCE(site.config #>> '{admin,passwordHash}', site.config #>> '{admin,password_hash}',
+                site.config #>> '{owner,passwordHash}', site.config #>> '{owner,password_hash}')
+FROM tele_sites AS site
+WHERE (site.config #>> '{admin,passwordHash}') IS NOT NULL
+   OR (site.config #>> '{admin,password_hash}') IS NOT NULL
+   OR (site.config #>> '{owner,passwordHash}') IS NOT NULL
+   OR (site.config #>> '{owner,password_hash}') IS NOT NULL
+ON CONFLICT (site_id) DO NOTHING;
+-- JSON-wrapped values in a text column are unwrapped: `"pbkdf2$…"` keeps the
+-- inner hash, and a document contributes its hash field. A plain hash is left
+-- untouched, so re-running this migration never changes a good credential.
+UPDATE tele_admin_users
+SET password_hash = COALESCE(
+  substring(password_hash from '^[[:space:]]*"([^"]+)"[[:space:]]*$'),
+  (regexp_match(password_hash, '"(?:passwordHash|password_hash|hash|password)"[[:space:]]*:[[:space:]]*"([^"]+)"'))[1]
+)
+WHERE password_hash IS NOT NULL
+  AND (password_hash ~ '^[[:space:]]*"'
+    OR password_hash ~ '"(?:passwordHash|password_hash|hash|password)"[[:space:]]*:');
+-- Restore the NOT NULL guarantee once every stored value is readable text.
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'tele_admin_users'
+      AND column_name = 'password_hash' AND is_nullable = 'YES'
+  ) AND NOT EXISTS (SELECT 1 FROM tele_admin_users WHERE password_hash IS NULL) THEN
+    ALTER TABLE tele_admin_users ALTER COLUMN password_hash SET NOT NULL;
+  END IF;
+END $$;
 
 -- Fixed blog schema by design: no custom content types or arbitrary blocks.
 CREATE TABLE IF NOT EXISTS tele_blog_posts (

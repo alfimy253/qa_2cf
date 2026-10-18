@@ -778,8 +778,10 @@ import { GalleryEditor, emptyGallery } from './content-gallery.js';
       $('loginMessage').textContent = '';
       button.disabled = true;
       try {
+        console.log('[auth-ui]', { flow: 'admin-login', stage: 'submit' });
         const session = await api('/api/admin/login', { method: 'POST', body: { username, password } });
         $('adminPassword').value = '';
+        console.log('[auth-ui]', { flow: 'admin-login', stage: 'session.received' });
         setSignedIn(true, session.email || '');
         fillOwnerAccount({ username: session.username || username, email: session.email || '' });
         if (followDashboardPath(session)) return;
@@ -787,6 +789,7 @@ import { GalleryEditor, emptyGallery } from './content-gallery.js';
         await loadAdminWorkspace();
       } catch (error) {
         $('adminPassword').value = '';
+        console.log('[auth-ui]', { flow: 'admin-login', stage: 'request.failed' });
         $('loginMessage').textContent = error.message || 'The username or password is incorrect.';
         setSignedIn(false);
         toast('Sign-in failed', error.message || 'Check your username and password.', true);

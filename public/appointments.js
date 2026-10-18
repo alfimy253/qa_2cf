@@ -350,13 +350,15 @@
   async function submitAuth(event, endpoint, formId, messageId) {
     event.preventDefault(); const form = event.currentTarget;
     if (!form.reportValidity()) return;
+    console.log('[auth-ui]', { flow: endpoint.endsWith('register') ? 'register' : 'client-login', stage: 'submit' });
     const body = Object.fromEntries(new FormData(form).entries());
     setMessage(messageId, 'One moment…');
     const button = form.querySelector('[type="submit"]'); if (button) button.disabled = true;
     try {
       const result = await api(endpoint, { method: 'POST', body });
+      console.log('[auth-ui]', { stage: 'session.received' });
       form.reset(); setMessage(messageId, ''); showClient(result.client); toast(endpoint.endsWith('register') ? 'Account created' : 'You are signed in');
-    } catch (error) { setMessage(messageId, error.message, true); }
+    } catch (error) { console.log('[auth-ui]', { stage: 'request.failed' }); setMessage(messageId, error.message, true); }
     finally { if (button) button.disabled = false; }
   }
   async function submitReservation(event) {

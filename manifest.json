@@ -3,7 +3,7 @@
   "version": "1.3.0",
   "siteId": "brightside-dental-studio",
   "specialty": "dental",
-  "generatedAt": "2026-10-16T13:11:48.252Z",
+  "generatedAt": "2026-10-18T12:55:16.816Z",
   "target": "cloudflare",
   "database": "Neon Postgres",
   "features": {
@@ -19,14 +19,14 @@
     "businessName": "Brightside Dental Studio",
     "brandName": "Brightside Dental",
     "location": "Quezon City, Philippines",
-    "email": "company@brightside.example",
+    "email": "hello1@brightside.example",
     "phone": "+63 2 8123 4567",
     "timeZone": "Asia/Manila",
-    "theme": "brivon-light",
+    "theme": "brivon-dark",
     "editorialAccent": "black",
-    "primaryColor": "#506f00",
-    "accentColor": "#506f00",
-    "paperColor": "#f5f5ef",
+    "primaryColor": "#d4ff3d",
+    "accentColor": "#d4ff3d",
+    "paperColor": "#0a0a0c",
     "fontStyle": "serif",
     "features": {
       "blog": true,
@@ -79,6 +79,6 @@
         "href": "/#contact"
       }
     ],
-    "createdAt": "2026-10-16T13:11:48.252Z"
+    "createdAt": "2026-10-18T12:55:16.816Z"
   }
 }
