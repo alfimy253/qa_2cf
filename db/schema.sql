@@ -274,6 +274,110 @@ CREATE TABLE IF NOT EXISTS tele_client_accounts (
   updated_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (site_id, email)
 );
+-- Bug Fix Session #229, extended to the client account table. The owner table
+-- above is repaired in place, but a database whose first build wrote the
+-- *client* credential the same way was left untouched, and both client routes
+-- failed on it:
+--   - `INSERT INTO tele_client_accounts` wrote a plain text hash into a JSON
+--     column and failed with SQLSTATE 22P02, so no visitor could sign up
+--     ("Could not create the client account.");
+--   - a stored JSON document was compared as if it were a hash, so a client
+--     whose account already existed could never sign in ("Email or password is
+--     incorrect.").
+-- Every statement below is idempotent and safe to rerun. They sit before the
+-- index below because a legacy table can be missing a column the index needs.
+ALTER TABLE tele_client_accounts ADD COLUMN IF NOT EXISTS id uuid DEFAULT gen_random_uuid();
+ALTER TABLE tele_client_accounts ADD COLUMN IF NOT EXISTS full_name varchar(100);
+ALTER TABLE tele_client_accounts ADD COLUMN IF NOT EXISTS email varchar(120);
+ALTER TABLE tele_client_accounts ADD COLUMN IF NOT EXISTS phone varchar(30);
+ALTER TABLE tele_client_accounts ADD COLUMN IF NOT EXISTS password_hash text;
+ALTER TABLE tele_client_accounts ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+ALTER TABLE tele_client_accounts ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+-- A JSON-typed credential column becomes plain text. A JSON string keeps its
+-- inner hash; a JSON document keeps its text so the unwrap below can pull the
+-- hash out of `passwordHash`/`password_hash`/`hash`/`password`.
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'tele_client_accounts'
+      AND column_name = 'password_hash' AND data_type IN ('jsonb', 'json')
+  ) THEN
+    ALTER TABLE tele_client_accounts ALTER COLUMN password_hash DROP DEFAULT;
+    ALTER TABLE tele_client_accounts ALTER COLUMN password_hash TYPE text USING (
+      CASE WHEN jsonb_typeof(password_hash::jsonb) = 'string'
+        THEN password_hash::jsonb #>> '{}'
+        ELSE password_hash::jsonb::text END
+    );
+  END IF;
+END $$;
+-- Any other legacy type (for example varchar) also becomes text.
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'tele_client_accounts'
+      AND column_name = 'password_hash'
+      AND data_type NOT IN ('text', 'character varying', 'jsonb', 'json')
+  ) THEN
+    ALTER TABLE tele_client_accounts ALTER COLUMN password_hash TYPE text USING password_hash::text;
+  END IF;
+END $$;
+-- JSON-wrapped values in a text column are unwrapped in place, exactly like
+-- the owner credential above. A plain hash is left untouched, so re-running
+-- this migration never changes a good credential.
+UPDATE tele_client_accounts
+SET password_hash = COALESCE(
+  substring(password_hash from '^[[:space:]]*"([^"]+)"[[:space:]]*$'),
+  (regexp_match(password_hash, '"(?:passwordHash|password_hash|hash|password)"[[:space:]]*:[[:space:]]*"([^"]+)"'))[1]
+)
+WHERE password_hash IS NOT NULL
+  AND (password_hash ~ '^[[:space:]]*"'
+    OR password_hash ~ '"(?:passwordHash|password_hash|hash|password)"[[:space:]]*:');
+-- Restore the NOT NULL guarantee once every stored value is readable text, so
+-- a future account can never be written without a credential.
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'tele_client_accounts'
+      AND column_name = 'password_hash' AND is_nullable = 'YES'
+  ) AND NOT EXISTS (SELECT 1 FROM tele_client_accounts WHERE password_hash IS NULL) THEN
+    ALTER TABLE tele_client_accounts ALTER COLUMN password_hash SET NOT NULL;
+  END IF;
+END $$;
+-- The identity the client sign-in route looks up: one account per address and
+-- site. The constraint is only added when the legacy table holds no duplicate
+-- rows, so the repair can never fail on data it cannot change.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'tele_client_accounts'::regclass AND contype = 'u'
+      AND pg_get_constraintdef(oid) ~ 'UNIQUE\s*\(\s*site_id\s*,\s*email\s*\)'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM tele_client_accounts GROUP BY site_id, email HAVING count(*) > 1
+  ) THEN
+    ALTER TABLE tele_client_accounts ADD CONSTRAINT tele_client_accounts_site_id_email_key UNIQUE (site_id, email);
+  END IF;
+END $$;
+-- The primary key the session and appointment foreign keys point at. A legacy
+-- table without it is repaired, but only when the id column is a uuid without
+-- gaps — the migration never rewrites an identity it cannot be sure about.
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'tele_client_accounts'
+      AND column_name = 'id' AND data_type = 'uuid' AND is_nullable = 'YES'
+  ) AND NOT EXISTS (SELECT 1 FROM tele_client_accounts WHERE id IS NULL) THEN
+    ALTER TABLE tele_client_accounts ALTER COLUMN id SET NOT NULL;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conrelid = 'tele_client_accounts'::regclass AND contype = 'p'
+  ) AND EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'tele_client_accounts'
+      AND column_name = 'id' AND data_type = 'uuid' AND is_nullable = 'NO'
+  ) THEN
+    ALTER TABLE tele_client_accounts ADD CONSTRAINT tele_client_accounts_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS tele_client_accounts_site_idx ON tele_client_accounts(site_id, created_at DESC);
 DROP INDEX IF EXISTS client_accounts_site_idx;
 
@@ -286,6 +390,26 @@ CREATE TABLE IF NOT EXISTS tele_client_sessions (
   created_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (site_id, token_hash)
 );
+-- The same repair for the session table: a legacy shape without a token hash
+-- or an expiry made the sign-in insert fail, so registration created the
+-- account and then answered "Account created, but automatic sign-in failed."
+ALTER TABLE tele_client_sessions ADD COLUMN IF NOT EXISTS id uuid DEFAULT gen_random_uuid();
+ALTER TABLE tele_client_sessions ADD COLUMN IF NOT EXISTS site_id text;
+ALTER TABLE tele_client_sessions ADD COLUMN IF NOT EXISTS client_account_id uuid;
+ALTER TABLE tele_client_sessions ADD COLUMN IF NOT EXISTS token_hash char(64);
+ALTER TABLE tele_client_sessions ADD COLUMN IF NOT EXISTS expires_at timestamptz;
+ALTER TABLE tele_client_sessions ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'tele_client_sessions'::regclass AND contype = 'u'
+      AND pg_get_constraintdef(oid) ~ 'UNIQUE\s*\(\s*site_id\s*,\s*token_hash\s*\)'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM tele_client_sessions GROUP BY site_id, token_hash HAVING count(*) > 1
+  ) THEN
+    ALTER TABLE tele_client_sessions ADD CONSTRAINT tele_client_sessions_site_id_token_hash_key UNIQUE (site_id, token_hash);
+  END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS tele_client_sessions_expiry_idx ON tele_client_sessions(site_id, expires_at);
 DROP INDEX IF EXISTS client_sessions_expiry_idx;
 
